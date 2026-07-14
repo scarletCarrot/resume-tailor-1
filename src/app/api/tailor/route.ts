@@ -72,6 +72,7 @@ export async function POST(request: Request) {
                 resumeDocxName: result.resumeDocxName,
                 resumePdfName: result.resumePdfName,
                 coverLetterDocxName: result.coverLetterDocxName,
+                downloads: result.downloads,
                 atsScore: result.atsScore,
                 atsSummary: result.atsSummary,
                 extracted: result.extracted,

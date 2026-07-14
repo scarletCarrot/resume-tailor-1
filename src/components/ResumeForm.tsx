@@ -10,6 +10,12 @@ import {
 
 type StepStatus = "pending" | "active" | "done" | "error";
 
+type JobDownloads = {
+  resumeDocxUrl: string;
+  coverLetterDocxUrl: string;
+  zipUrl: string;
+};
+
 type JobProgress = {
   index: number;
   jobUrl: string;
@@ -23,10 +29,34 @@ type JobProgress = {
   resumeDocxName?: string;
   resumePdfName?: string;
   coverLetterDocxName?: string;
+  downloads?: JobDownloads;
   jobTitle?: string;
   atsScore?: number;
   error?: string;
 };
+
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+function base64ToObjectUrl(base64: string, mime: string): string {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
+function downloadsFromEvent(
+  data: Extract<ProgressEvent, { type: "job_done" }>,
+): JobDownloads {
+  return {
+    resumeDocxUrl: base64ToObjectUrl(data.downloads.resumeDocxBase64, DOCX_MIME),
+    coverLetterDocxUrl: base64ToObjectUrl(
+      data.downloads.coverLetterDocxBase64,
+      DOCX_MIME,
+    ),
+    zipUrl: base64ToObjectUrl(data.downloads.zipBase64, "application/zip"),
+  };
+}
 
 const STEP_SHORT: Record<JobStep, string> = {
   scraping: "Scrape",
@@ -91,6 +121,12 @@ function markJobDone(
   const stepStatuses = { ...job.stepStatuses };
   for (const step of JOB_STEPS) stepStatuses[step] = "done";
 
+  if (job.downloads) {
+    URL.revokeObjectURL(job.downloads.resumeDocxUrl);
+    URL.revokeObjectURL(job.downloads.coverLetterDocxUrl);
+    URL.revokeObjectURL(job.downloads.zipUrl);
+  }
+
   return {
     ...job,
     status: "done",
@@ -103,6 +139,7 @@ function markJobDone(
     resumeDocxName: data.resumeDocxName,
     resumePdfName: data.resumePdfName,
     coverLetterDocxName: data.coverLetterDocxName,
+    downloads: downloadsFromEvent(data),
     jobTitle: data.extracted.jobTitle,
     atsScore: data.atsScore,
     error: undefined,
@@ -472,7 +509,7 @@ export default function ResumeForm() {
                   {job.error && <p className="job-error">{job.error}</p>}
 
                   {job.status === "done" &&
-                    job.folderName &&
+                    job.downloads &&
                     job.zipName &&
                     job.resumeDocxName &&
                     job.coverLetterDocxName && (
@@ -481,21 +518,24 @@ export default function ResumeForm() {
                       <div className="download-actions">
                         <a
                           className="download-btn"
-                          href={`/api/download?folder=${encodeURIComponent(job.folderName)}&name=${encodeURIComponent(job.resumeDocxName)}`}
+                          href={job.downloads.resumeDocxUrl}
+                          download={job.resumeDocxName}
                         >
                           <DownloadIcon />
                           {job.resumeDocxName}
                         </a>
                         <a
                           className="download-btn"
-                          href={`/api/download?folder=${encodeURIComponent(job.folderName)}&name=${encodeURIComponent(job.coverLetterDocxName)}`}
+                          href={job.downloads.coverLetterDocxUrl}
+                          download={job.coverLetterDocxName}
                         >
                           <DownloadIcon />
                           {job.coverLetterDocxName}
                         </a>
                         <a
                           className="download-btn zip"
-                          href={`/api/download?file=${encodeURIComponent(job.zipName)}`}
+                          href={job.downloads.zipUrl}
+                          download={job.zipName}
                         >
                           <DownloadIcon />
                           {job.zipName}

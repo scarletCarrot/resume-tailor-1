@@ -1,6 +1,7 @@
 import { ZipArchive } from "archiver";
 import { createWriteStream } from "fs";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import os from "os";
 import path from "path";
 import type { ExtractedJD, PersonalInfo, TailoredPackage } from "./types";
 import {
@@ -15,9 +16,19 @@ import {
   sanitizeCompanyFolderName,
 } from "./scrape";
 
+/** Vercel/Lambda only allow writes under /tmp; local keeps ./output. */
 export function getOutputRoot() {
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join(os.tmpdir(), "resume-tailor-output");
+  }
   return path.join(process.cwd(), "output");
 }
+
+export type PackageDownloads = {
+  zipBase64: string;
+  resumeDocxBase64: string;
+  coverLetterDocxBase64: string;
+};
 
 async function zipDirectory(
   sourceDir: string,
@@ -53,6 +64,7 @@ export async function saveJobPackage(options: {
   resumeDocxName: string;
   resumePdfName: string;
   coverLetterDocxName: string;
+  downloads: PackageDownloads;
 }> {
   const { index, jobUrl, rawJd, extracted, personal, tailored } = options;
   const outputRoot = getOutputRoot();
@@ -75,15 +87,18 @@ export async function saveJobPackage(options: {
     tailored.resume.keywords,
   );
 
+  const resumeDocxPath = path.join(folderPath, files.resumeDocx);
+  const coverDocxPath = path.join(folderPath, files.coverLetterDocx);
+
   await writeFile(
     path.join(folderPath, "jd.txt"),
     `Source URL: ${jobUrl}\n\n${rawJd}`,
     "utf8",
   );
   await writeFile(path.join(folderPath, "extracted_jd.txt"), extractedText, "utf8");
-  await writeFile(path.join(folderPath, files.resumeDocx), resumeDocx);
+  await writeFile(resumeDocxPath, resumeDocx);
   await writeFile(path.join(folderPath, files.resumePdf), resumePdf);
-  await writeFile(path.join(folderPath, files.coverLetterDocx), coverDocx);
+  await writeFile(coverDocxPath, coverDocx);
   await writeFile(
     path.join(folderPath, files.coverLetterTxt),
     tailored.coverLetter,
@@ -94,6 +109,14 @@ export async function saveJobPackage(options: {
   const zipPath = path.join(outputRoot, zipName);
   await zipDirectory(folderPath, zipPath);
 
+  // Embed file bytes for the client — Vercel /tmp is not shared across invocations,
+  // so /api/download cannot reliably serve files written during /api/tailor.
+  const [zipBuf, resumeBuf, coverBuf] = await Promise.all([
+    readFile(zipPath),
+    readFile(resumeDocxPath),
+    readFile(coverDocxPath),
+  ]);
+
   return {
     folderPath,
     zipPath,
@@ -103,5 +126,10 @@ export async function saveJobPackage(options: {
     resumeDocxName: files.resumeDocx,
     resumePdfName: files.resumePdf,
     coverLetterDocxName: files.coverLetterDocx,
+    downloads: {
+      zipBase64: zipBuf.toString("base64"),
+      resumeDocxBase64: resumeBuf.toString("base64"),
+      coverLetterDocxBase64: coverBuf.toString("base64"),
+    },
   };
 }

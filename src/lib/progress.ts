@@ -38,6 +38,12 @@ export type ProgressEvent =
       coverLetterDocxName: string;
       atsScore: number;
       atsSummary: string;
+      /** Base64 payloads so downloads work when the server FS is ephemeral (Vercel). */
+      downloads: {
+        zipBase64: string;
+        resumeDocxBase64: string;
+        coverLetterDocxBase64: string;
+      };
       extracted: {
         company: string;
         jobTitle: string;
