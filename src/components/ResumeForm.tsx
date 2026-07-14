@@ -214,7 +214,9 @@ function StatusBadge({ status }: { status: JobProgress["status"] }) {
 export default function ResumeForm() {
   const [jobLinks, setJobLinks] = useState("");
   const [loading, setLoading] = useState(false);
-  const [retryingIndex, setRetryingIndex] = useState<number | null>(null);
+  const [retryingIndices, setRetryingIndices] = useState<Record<number, true>>(
+    {},
+  );
   const [error, setError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<JobProgress[]>([]);
   const [status, setStatus] = useState<string | null>(null);
@@ -251,17 +253,19 @@ export default function ResumeForm() {
     mode: "batch" | "retry",
   ) {
     setError(null);
+    const retryIndex = mode === "retry" ? targets[0]?.index : null;
 
     if (mode === "batch") {
       setJobs(targets.map((t) => createJobProgress(t.index, t.url)));
       setManualJds({});
+      setRetryingIndices({});
       setLoading(true);
       setStatus(
         `Running ${targets.length} job${targets.length > 1 ? "s" : ""} in parallel`,
       );
     } else {
       const target = targets[0];
-      setRetryingIndex(target.index);
+      setRetryingIndices((prev) => ({ ...prev, [target.index]: true }));
       patchJob(target.index, () => createJobProgress(target.index, target.url));
       setStatus(
         target.manualJd?.trim()
@@ -334,8 +338,15 @@ export default function ResumeForm() {
       setError(err instanceof Error ? err.message : "Unexpected error");
       setStatus(null);
     } finally {
-      setLoading(false);
-      setRetryingIndex(null);
+      if (mode === "batch") {
+        setLoading(false);
+      } else if (retryIndex != null) {
+        setRetryingIndices((prev) => {
+          const next = { ...prev };
+          delete next[retryIndex];
+          return next;
+        });
+      }
     }
   }
 
@@ -359,7 +370,8 @@ export default function ResumeForm() {
   }
 
   async function onRetry(job: JobProgress, useManualJd: boolean) {
-    if (loading || retryingIndex !== null) return;
+    // Allow paste/retry while other jobs are still running; only block this job.
+    if (retryingIndices[job.index] || job.status === "running") return;
     const pasted = (manualJds[job.index] || "").trim();
     if (useManualJd && pasted.length < 80) {
       setError(
@@ -379,7 +391,8 @@ export default function ResumeForm() {
     );
   }
 
-  const busy = loading || retryingIndex !== null;
+  const hasActiveRetries = Object.keys(retryingIndices).length > 0;
+  const busy = loading || hasActiveRetries;
 
   return (
     <div className="workspace">
@@ -557,29 +570,31 @@ export default function ResumeForm() {
                         onChange={(e) => setManualJd(job.index, e.target.value)}
                         placeholder="Paste the full job description text here, then generate with pasted JD…"
                         spellCheck={false}
-                        disabled={busy}
                       />
                       <div className="retry-row">
                         <button
                           type="button"
                           className="retry-btn"
-                          disabled={busy}
+                          disabled={Boolean(retryingIndices[job.index])}
                           onClick={() => void onRetry(job, false)}
                         >
                           <RetryIcon />
-                          {retryingIndex === job.index
+                          {retryingIndices[job.index]
                             ? "Retrying…"
                             : "Retry scrape"}
                         </button>
                         <button
                           type="button"
                           className="retry-btn primary-ghost"
-                          disabled={busy || (manualJds[job.index] || "").trim().length < 80}
+                          disabled={
+                            Boolean(retryingIndices[job.index]) ||
+                            (manualJds[job.index] || "").trim().length < 80
+                          }
                           onClick={() => void onRetry(job, true)}
                           title="Skip scraping and use the pasted JD"
                         >
                           <RetryIcon />
-                          {retryingIndex === job.index
+                          {retryingIndices[job.index]
                             ? "Generating…"
                             : "Generate with pasted JD"}
                         </button>
