@@ -18,7 +18,7 @@ function contentTypeFor(name: string): string | null {
 }
 
 function isAllowedDocumentName(name: string): boolean {
-  // Resume-Saul.docx | Resume-Saul.pdf | Coverletter-Saul.docx
+  // Resume-Karina.docx | Resume-Karina.pdf | Coverletter-Karina.docx
   return /^(Resume|Coverletter)-[A-Za-z0-9][A-Za-z0-9._ -]{0,60}\.(docx|pdf|txt)$/i.test(
     name,
   );

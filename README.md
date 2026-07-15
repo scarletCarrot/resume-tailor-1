@@ -29,7 +29,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Flow
 
-1. Profile is fixed in code (`src/lib/profile.ts`) for Saul D. Trujillo
+1. Profile is fixed in code (`src/lib/profile.ts`) for Karina Elizabeth Garcia Lozana
 2. Paste job URLs (one per line)
 3. The app scrapes each posting in parallel, extracts the JD, and writes a tailored resume + cover letter
 
@@ -42,10 +42,10 @@ output/
   Company_Name/
     jd.txt
     extracted_jd.txt
-    Resume-Saul.docx
-    Resume-Saul.pdf
-    Coverletter-Saul.docx
-    Coverletter-Saul.txt
+    Resume-Karina.docx
+    Resume-Karina.pdf
+    Coverletter-Karina.docx
+    Coverletter-Karina.txt
   Clara-Software Engineer.zip
   ...
 ```

@@ -2,38 +2,38 @@ import type { CandidateProfile } from "./types";
 
 export const CANDIDATE_PROFILE: CandidateProfile = {
   personal: {
-    name: "Saul D. Trujillo",
-    phone: "+57 313 6512121",
-    linkedin: "https://www.linkedin.com/in/saul-d-trujillo-58aa623b7",
-    email: "saul2001trujillo@gmail.com",
-    location: "Valledupar, Colombia",
+    name: "Karina Elizabeth Garcia Lozana",
+    phone: "+55 667 22218",
+    linkedin: "https://www.linkedin.com/in/karina-garcia-1a8805421",
+    email: "karinagarcia45904@gmail.com",
+    location: "Tepetlaoxtoc, Mexico",
   },
   experiences: [
     {
-      company: "ChartMogul",
+      company: "Surt",
       title: "Senior Software Engineer",
-      period: "Oct 2022 – Mar 2026",
+      period: "Jun 2022 – Apr 2026",
       location: "Remote",
     },
     {
-      company: "Tpaga",
+      company: "HiHello",
       title: "Software Engineer",
-      period: "Aug 2017 – Aug 2022",
+      period: "Jan 2018 – Feb 2022",
       location: "Remote",
     },
     {
-      company: "Nearshore Software Development Agency",
+      company: "SmartCone Technologies Inc",
       title: "Software Developer",
-      period: "May 2013 – Jul 2017",
-      location: "OnSite",
+      period: "Nov 2016 – Dec 2017",
+      location: "Ontario, Canada",
     },
   ],
   education: [
     {
-      school: "Universidad Popular del César",
-      degree: "Bachelor of Degree in Systems Engineering",
-      period: "2009 – 2013",
-      location: "Valledupar, Colombia",
+      school: "University of Waterloo",
+      degree: "Bachelor of Degree in Computer Science",
+      period: "2012 – 2016",
+      location: "Waterloo, Ontario, Canada",
     },
   ],
 };
