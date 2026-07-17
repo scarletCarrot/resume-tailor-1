@@ -3,7 +3,7 @@ import type { CandidateProfile } from "./types";
 export const CANDIDATE_PROFILE: CandidateProfile = {
   personal: {
     name: "Karina Elizabeth Garcia Lozana",
-    phone: "+55 667 22218",
+    phone: "+52 55 6722 2218",
     linkedin: "https://www.linkedin.com/in/karina-garcia-1a8805421",
     email: "karinagarcia45904@gmail.com",
     location: "Tepetlaoxtoc, Mexico",
