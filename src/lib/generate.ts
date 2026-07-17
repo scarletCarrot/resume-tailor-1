@@ -5,6 +5,7 @@ import type {
   TailoredPackage,
   TailoredResume,
 } from "./types";
+import { tailorExperienceTitle } from "./job-title";
 import { getLlmClient, getLlmModel } from "./llm";
 import { parseModelJson } from "./parse-json";
 import { sanitizePlainText } from "./validate-resume";
@@ -21,12 +22,12 @@ Hard rules:
    - overview: 1-2 sentences (about 25-45 words) describing what the company does and the candidate's core responsibility in that role, tailored toward the target JD.
    - exactly 7 bullet points of accomplishments.
 4. Each bullet must be professional and specific (~25-40 words). Describe concrete work done.
-5. Include hard numbers (counts, scale, volume, latency, users, datasets, dollars) but NEVER invent unrealistic percentages.
+5. Use concrete absolute measures where appropriate (counts, scale, volume, latency, users, datasets, or dollars). NEVER use percentages, percentage points, or the % symbol anywhere in the resume or cover letter.
 6. Include slightly MORE relevant experience breadth than the JD strictly requires.
 7. Mirror JD terminology and hard skills heavily for ATS scoring.
 8. keywords: array of important JD keywords/phrases that should be bolded.
 9. Cover letter: 3-4 short paragraphs in ONE string, use \\n\\n between paragraphs. No icons/emojis.
-10. Keep the candidate's company names, periods, locations, and education exactly as given. You may refine job titles slightly if plausible.
+10. Keep the candidate's company names, periods, locations, and education exactly as given. Align every experience title to the extracted JD type. Use only Software Engineer, Data Engineer, Data Analyst, Data Scientist, or AI Engineer as the title family. The candidate's most recent senior role must use "Lead" when the JD title is a Lead role; otherwise use "Senior".
 11. Do not invent employers or schools. Invent realistic overviews and accomplishment bullets grounded in the companies and JD.
 12. Return ONLY valid compact JSON. Escape all double quotes inside strings. Do not wrap in markdown.
 13. NEVER use markdown in any string (**bold**, *italic*, backticks, headings). Plain text only. Keyword bolding is applied later by the document formatter.
@@ -223,7 +224,11 @@ function normalizeResume(
 
     return {
       company: exp.company,
-      title: sanitizePlainText(generated?.title?.trim() || exp.title),
+      title: tailorExperienceTitle(
+        exp.title,
+        extracted.type,
+        extracted.jobTitle,
+      ),
       period: exp.period,
       location: exp.location,
       overview:

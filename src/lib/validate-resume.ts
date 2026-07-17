@@ -5,6 +5,7 @@ import type {
   TailoredPackage,
   TailoredResume,
 } from "./types";
+import { tailorExperienceTitle } from "./job-title";
 
 export interface ValidationIssue {
   level: "error" | "warning" | "fixed";
@@ -17,9 +18,24 @@ export interface ValidationResult {
   package: TailoredPackage;
 }
 
+/** Remove percentage-based measurements without leaving common dangling phrases. */
+export function removePercentageValues(input: string): string {
+  const percentage = String.raw`\d+(?:\.\d+)?\s*(?:%|percent(?:age)?(?:\s+points?)?)`;
+
+  return String(input || "")
+    .replace(new RegExp(`\\bfrom\\s+${percentage}\\s+to\\s+${percentage}`, "gi"), "")
+    .replace(new RegExp(`\\b(?:by|about|approximately|roughly|nearly|over|under|up to)\\s+${percentage}`, "gi"), "")
+    .replace(new RegExp(`\\b${percentage}\\s+of\\s+`, "gi"), "")
+    .replace(new RegExp(`\\b${percentage}`, "gi"), "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 /** Strip markdown and other artifacts the model often injects. */
 export function sanitizePlainText(input: string): string {
-  let text = String(input || "");
+  let text = removePercentageValues(input);
 
   // Convert **bold** / __bold__ / *italic* / _italic_ to plain text
   text = text.replace(/\*\*([^*]+)\*\*/g, "$1");
@@ -60,14 +76,6 @@ function collectMarkdownIssues(label: string, text: string): ValidationIssue[] {
 
 function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
-}
-
-function hasUnrealisticPercent(text: string): boolean {
-  const matches = text.match(/(\d{2,3})\s*%/g) || [];
-  return matches.some((m) => {
-    const n = Number(m.replace(/[^\d]/g, ""));
-    return n >= 90;
-  });
 }
 
 function sanitizeSkills(skills: SkillGroup[]): SkillGroup[] {
@@ -152,7 +160,11 @@ export function validateAndFixResume(
 
   const experiences = profile.experiences.map((exp, index) => {
     const generated = resume.experiences[index];
-    let title = sanitizePlainText(generated?.title || exp.title);
+    const title = tailorExperienceTitle(
+      exp.title,
+      extracted.type,
+      extracted.jobTitle,
+    );
     let overview = sanitizePlainText(generated?.overview || "");
     let bullets = (generated?.bullets || [])
       .map((b) => sanitizePlainText(b))
@@ -212,12 +224,6 @@ export function validateAndFixResume(
         issues.push({
           level: "warning",
           message: `${exp.company} bullet ${j + 1} is shorter than expected.`,
-        });
-      }
-      if (hasUnrealisticPercent(bullet)) {
-        issues.push({
-          level: "warning",
-          message: `${exp.company} bullet ${j + 1} contains a high percentage claim.`,
         });
       }
       if (/\*\*|__/.test(bullet)) {

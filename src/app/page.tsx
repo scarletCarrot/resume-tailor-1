@@ -12,7 +12,7 @@ export default function Home() {
         <div className="topbar-inner">
           <div className="brand-block">
             <p className="brand">Resume Tailor</p>
-            <p className="brand-sub">ATS packets from job URLs</p>
+            <p className="brand-sub">ATS packets from job URLs or pasted JDs</p>
           </div>
           <div className="identity">
             <p className="identity-name">{personal.name}</p>

@@ -156,6 +156,33 @@ a {
   padding: 1.1rem 1.15rem 1.2rem;
 }
 
+.input-mode-tabs {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.input-mode {
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.input-mode.active {
+  background: var(--accent-deep);
+  color: #04140c;
+}
+
+.input-mode:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .section-head {
   display: flex;
   align-items: flex-start;
@@ -575,7 +602,8 @@ button {
 }
 
 .download-btn,
-.retry-btn {
+.retry-btn,
+.download-all-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -591,10 +619,18 @@ button {
 }
 
 .download-btn:hover,
-.retry-btn:hover:not(:disabled) {
+.retry-btn:hover:not(:disabled),
+.download-all-btn:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
   transform: translateY(-1px);
+}
+
+.download-all-btn {
+  flex-shrink: 0;
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: #04140c;
 }
 
 .download-btn.zip {

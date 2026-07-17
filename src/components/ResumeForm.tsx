@@ -9,6 +9,7 @@ import {
 } from "@/lib/progress";
 
 type StepStatus = "pending" | "active" | "done" | "error";
+type InputMode = "urls" | "manual";
 
 type JobDownloads = {
   resumeDocxUrl: string;
@@ -212,7 +213,9 @@ function StatusBadge({ status }: { status: JobProgress["status"] }) {
 }
 
 export default function ResumeForm() {
+  const [inputMode, setInputMode] = useState<InputMode>("urls");
   const [jobLinks, setJobLinks] = useState("");
+  const [manualJobDescription, setManualJobDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [retryingIndices, setRetryingIndices] = useState<Record<number, true>>(
     {},
@@ -257,7 +260,13 @@ export default function ResumeForm() {
 
     if (mode === "batch") {
       setJobs(targets.map((t) => createJobProgress(t.index, t.url)));
-      setManualJds({});
+      setManualJds(
+        Object.fromEntries(
+          targets
+            .filter((target) => target.manualJd)
+            .map((target) => [target.index, target.manualJd!]),
+        ),
+      );
       setRetryingIndices({});
       setLoading(true);
       setStatus(
@@ -353,6 +362,20 @@ export default function ResumeForm() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
 
+    if (inputMode === "manual") {
+      const pasted = manualJobDescription.trim();
+      if (pasted.length < 80) {
+        setError("Paste at least 80 characters of the job description.");
+        return;
+      }
+
+      await runJobs(
+        [{ url: "Pasted job description", index: 1, manualJd: pasted }],
+        "batch",
+      );
+      return;
+    }
+
     const jobUrls = jobLinks
       .split(/\n+/)
       .map((line) => line.trim())
@@ -393,40 +416,100 @@ export default function ResumeForm() {
 
   const hasActiveRetries = Object.keys(retryingIndices).length > 0;
   const busy = loading || hasActiveRetries;
+  const completedDownloads = jobs.filter(
+    (job) => job.status === "done" && job.downloads && job.zipName,
+  );
+
+  function downloadAllZips() {
+    for (const job of completedDownloads) {
+      const link = document.createElement("a");
+      link.href = job.downloads!.zipUrl;
+      link.download = job.zipName!;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+  }
 
   return (
     <div className="workspace">
       <form className="composer" onSubmit={onSubmit}>
-        <div className="section-head">
-          <div>
-            <h2>Job URLs</h2>
-            <p className="hint">
-              One link per line. Each package is saved as Company-Role.zip.
-            </p>
-          </div>
-          <div className="link-count" aria-live="polite">
-            {linkCount} link{linkCount === 1 ? "" : "s"}
-          </div>
+        <div className="input-mode-tabs" aria-label="Job description input method">
+          <button
+            type="button"
+            className={inputMode === "urls" ? "input-mode active" : "input-mode"}
+            aria-pressed={inputMode === "urls"}
+            onClick={() => setInputMode("urls")}
+            disabled={busy}
+          >
+            Job URLs
+          </button>
+          <button
+            type="button"
+            className={inputMode === "manual" ? "input-mode active" : "input-mode"}
+            aria-pressed={inputMode === "manual"}
+            onClick={() => setInputMode("manual")}
+            disabled={busy}
+          >
+            Paste job description
+          </button>
         </div>
 
-        <textarea
-          required
-          rows={7}
-          value={jobLinks}
-          onChange={(e) => setJobLinks(e.target.value)}
-          placeholder={
-            "https://job-boards.greenhouse.io/…/jobs/123\nhttps://jobs.lever.co/…"
-          }
-          spellCheck={false}
-        />
+        <div className="section-head">
+          <div>
+            <h2>
+              {inputMode === "urls" ? "Job URLs" : "Manual job description"}
+            </h2>
+            <p className="hint">
+              {inputMode === "urls"
+                ? "One link per line. Each package is saved as Company-Role.zip."
+                : "Paste a complete JD to generate without a job URL or scraping."}
+            </p>
+          </div>
+          {inputMode === "urls" && (
+            <div className="link-count" aria-live="polite">
+              {linkCount} link{linkCount === 1 ? "" : "s"}
+            </div>
+          )}
+        </div>
+
+        {inputMode === "urls" ? (
+          <textarea
+            required
+            rows={7}
+            value={jobLinks}
+            onChange={(e) => setJobLinks(e.target.value)}
+            placeholder={
+              "https://job-boards.greenhouse.io/…/jobs/123\nhttps://jobs.lever.co/…"
+            }
+            spellCheck={false}
+          />
+        ) : (
+          <textarea
+            required
+            rows={11}
+            value={manualJobDescription}
+            onChange={(e) => setManualJobDescription(e.target.value)}
+            placeholder="Paste the full job title, company, responsibilities, requirements, and preferred qualifications…"
+          />
+        )}
 
         <div className="composer-footer">
           <button
             type="submit"
             className="primary"
-            disabled={busy || linkCount === 0}
+            disabled={
+              busy ||
+              (inputMode === "urls"
+                ? linkCount === 0
+                : manualJobDescription.trim().length < 80)
+            }
           >
-            {loading ? "Processing…" : "Generate packages"}
+            {loading
+              ? "Processing…"
+              : inputMode === "urls"
+                ? "Generate packages"
+                : "Generate resume"}
           </button>
           {status && <p className="inline-status">{status}</p>}
         </div>
@@ -444,11 +527,21 @@ export default function ResumeForm() {
                 : `${summary.done} done · ${summary.running} running · ${summary.failed} failed`}
             </p>
           </div>
+          {completedDownloads.length > 0 && (
+            <button
+              type="button"
+              className="download-all-btn"
+              onClick={downloadAllZips}
+            >
+              <DownloadIcon />
+              Download all ZIPs ({completedDownloads.length})
+            </button>
+          )}
         </div>
 
         {jobs.length === 0 ? (
           <div className="empty-board">
-            <p>Paste job URLs and generate to start.</p>
+            <p>Add job URLs or paste a job description to start.</p>
             <ol>
               <li>Scrape posting</li>
               <li>Extract JD</li>
@@ -491,15 +584,19 @@ export default function ResumeForm() {
                       {job.jobTitle && (
                         <p className="job-role">{job.jobTitle}</p>
                       )}
-                      <a
-                        className="job-url"
-                        href={job.jobUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={job.jobUrl}
-                      >
-                        {job.jobUrl}
-                      </a>
+                      {job.jobUrl === "Pasted job description" ? (
+                        <p className="job-url">Pasted job description</p>
+                      ) : (
+                        <a
+                          className="job-url"
+                          href={job.jobUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={job.jobUrl}
+                        >
+                          {job.jobUrl}
+                        </a>
+                      )}
                     </div>
                   </div>
 
@@ -560,7 +657,9 @@ export default function ResumeForm() {
                   {job.status === "error" && (
                     <div className="manual-jd-panel">
                       <label className="manual-jd-label" htmlFor={`manual-jd-${job.index}`}>
-                        Paste job description (for blocked / captcha pages)
+                        {job.jobUrl === "Pasted job description"
+                          ? "Edit the pasted job description and retry"
+                          : "Paste job description (for blocked / captcha pages)"}
                       </label>
                       <textarea
                         id={`manual-jd-${job.index}`}
@@ -572,17 +671,19 @@ export default function ResumeForm() {
                         spellCheck={false}
                       />
                       <div className="retry-row">
-                        <button
-                          type="button"
-                          className="retry-btn"
-                          disabled={Boolean(retryingIndices[job.index])}
-                          onClick={() => void onRetry(job, false)}
-                        >
-                          <RetryIcon />
-                          {retryingIndices[job.index]
-                            ? "Retrying…"
-                            : "Retry scrape"}
-                        </button>
+                        {job.jobUrl !== "Pasted job description" && (
+                          <button
+                            type="button"
+                            className="retry-btn"
+                            disabled={Boolean(retryingIndices[job.index])}
+                            onClick={() => void onRetry(job, false)}
+                          >
+                            <RetryIcon />
+                            {retryingIndices[job.index]
+                              ? "Retrying…"
+                              : "Retry scrape"}
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="retry-btn primary-ghost"
