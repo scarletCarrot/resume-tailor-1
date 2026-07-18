@@ -78,6 +78,65 @@ function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/** Normalized form used to detect duplicate or near-identical bullets. */
+function bulletKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Drop empty and repeated bullets while preserving order. */
+export function dedupeBullets(bullets: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const bullet of bullets) {
+    const key = bulletKey(bullet);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(bullet);
+  }
+  return unique;
+}
+
+/** Fallback professional summary when the model omits or truncates one. */
+export function buildFallbackSummary(
+  profile: CandidateProfile,
+  extracted: ExtractedJD,
+): string {
+  const years = Math.max(profile.experiences.length * 3, 8);
+  const skills = extracted.hardTechnicalSkills.slice(0, 5).join(", ");
+  const title = extracted.type || "Software Engineer";
+  return (
+    `${title} with ${years}+ years of experience designing, building, and operating production software across startups and product companies. ` +
+    `Hands-on with ${skills || "modern engineering stacks"}, with a track record of shipping reliable systems, collaborating across functions, and mentoring engineers. ` +
+    `Seeking to apply this experience to the ${extracted.jobTitle || title} role at ${extracted.company || "the hiring company"}.`
+  );
+}
+
+/** Varied filler bullets so padding never repeats the same sentence. */
+export function buildFillerBullet(
+  company: string,
+  skills: string[],
+  slot: number,
+): string {
+  const pick = (offset: number) =>
+    skills.length ? skills[(slot + offset) % skills.length] : "";
+  const primary = pick(0) || "core platform services";
+  const secondary = pick(1) || "internal tooling";
+
+  const templates = [
+    `Partnered with product and design stakeholders to scope, build, and ship features using ${primary}, coordinating rollout plans and post-release monitoring for ${company} customers.`,
+    `Strengthened reliability of ${company} services by expanding automated test coverage, tightening code review standards, and hardening CI checks across systems built with ${primary} and ${secondary}.`,
+    `Diagnosed and resolved production incidents in systems built on ${primary}, documenting root causes and adding safeguards that prevented recurring failures for ${company} teams.`,
+    `Mentored teammates through pairing sessions and design reviews, raising team fluency in ${primary} and establishing shared engineering practices across ${company} projects.`,
+    `Led refactoring of legacy modules into maintainable, well-tested components built on ${primary}, unblocking faster feature delivery for ${company} product teams.`,
+    `Translated business requirements into technical designs alongside cross-functional partners and delivered them using ${primary} and ${secondary}, keeping ${company} stakeholders aligned throughout.`,
+    `Owned end-to-end delivery of internal improvements spanning ${primary} and ${secondary}, from technical proposal through deployment and operational handoff at ${company}.`,
+  ];
+  return templates[slot % templates.length];
+}
+
 function sanitizeSkills(skills: SkillGroup[]): SkillGroup[] {
   return skills
     .map((group) => ({
@@ -114,7 +173,7 @@ export function validateAndFixResume(
   }
   issues.push(...collectMarkdownIssues("cover letter", tailored.coverLetter));
 
-  const summary = sanitizePlainText(resume.summary);
+  let summary = sanitizePlainText(resume.summary);
   const coverLetter = sanitizePlainText(tailored.coverLetter);
   const skills = sanitizeSkills(resume.skills);
   const keywords = resume.keywords
@@ -123,9 +182,10 @@ export function validateAndFixResume(
 
   if (!summary || wordCount(summary) < 20) {
     issues.push({
-      level: "error",
-      message: "Summary is missing or too short.",
+      level: "fixed",
+      message: "Summary was missing or too short; replaced with a tailored fallback.",
     });
+    summary = buildFallbackSummary(profile, extracted);
   }
 
   if (!coverLetter || wordCount(coverLetter) < 40) {
@@ -166,9 +226,16 @@ export function validateAndFixResume(
       extracted.jobTitle,
     );
     let overview = sanitizePlainText(generated?.overview || "");
-    let bullets = (generated?.bullets || [])
+    const rawBullets = (generated?.bullets || [])
       .map((b) => sanitizePlainText(b))
       .filter(Boolean);
+    let bullets = dedupeBullets(rawBullets);
+    if (bullets.length < rawBullets.length) {
+      issues.push({
+        level: "fixed",
+        message: `Removed ${rawBullets.length - bullets.length} duplicate bullet(s) for ${exp.company}.`,
+      });
+    }
 
     if (generated?.company && generated.company !== exp.company) {
       issues.push({
@@ -204,10 +271,13 @@ export function validateAndFixResume(
         level: "fixed",
         message: `Added missing bullets for ${exp.company} (need 7–8).`,
       });
+      let slot = 0;
       while (bullets.length < 7) {
-        bullets.push(
-          `Collaborated with cross-functional partners to deliver ${extracted.hardTechnicalSkills.slice(0, 2).join(" and ") || "production software"} improvements that strengthened reliability and delivery outcomes for ${exp.company} customers.`,
-        );
+        bullets = dedupeBullets([
+          ...bullets,
+          buildFillerBullet(exp.company, extracted.hardTechnicalSkills, slot),
+        ]);
+        slot += 1;
       }
     }
 

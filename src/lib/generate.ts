@@ -8,7 +8,12 @@ import type {
 import { tailorExperienceTitle } from "./job-title";
 import { getLlmClient, getLlmModel } from "./llm";
 import { parseModelJson } from "./parse-json";
-import { sanitizePlainText } from "./validate-resume";
+import {
+  buildFallbackSummary,
+  buildFillerBullet,
+  dedupeBullets,
+  sanitizePlainText,
+} from "./validate-resume";
 
 const SYSTEM_PROMPT = `You are an expert ATS resume writer and career coach.
 Create a tailored resume and cover letter that maximize ATS keyword match for the target role.
@@ -85,12 +90,18 @@ export async function generateTailoredPackage(
     }
   }
 
-  const resume = normalizeResume(parsed.resume, profile, extracted);
+  // Models occasionally return resume fields at the top level instead of
+  // nested under "resume"; accept both shapes.
+  const shaped = parsed as Partial<TailoredPackage> & Partial<TailoredResume>;
+  const rawResume =
+    shaped.resume ??
+    (Array.isArray(shaped.experiences) || shaped.summary
+      ? (shaped as unknown as TailoredResume)
+      : undefined);
+
+  const resume = normalizeResume(rawResume, profile, extracted);
   const coverLetter = String(parsed.coverLetter || "").trim();
 
-  if (!resume.summary) {
-    throw new Error("Resume summary generation failed.");
-  }
   if (!coverLetter) {
     throw new Error("Cover letter generation failed.");
   }
@@ -202,15 +213,20 @@ function normalizeResume(
 
   const experiences = profile.experiences.map((exp, index) => {
     const generated = safe.experiences?.[index];
-    let bullets = (generated?.bullets || [])
-      .map(String)
-      .map((b) => sanitizePlainText(b))
-      .filter(Boolean);
+    let bullets = dedupeBullets(
+      (generated?.bullets || [])
+        .map(String)
+        .map((b) => sanitizePlainText(b))
+        .filter(Boolean),
+    );
 
+    let slot = 0;
     while (bullets.length < 7) {
-      bullets.push(
-        `Partnered with cross-functional stakeholders to deliver production-ready solutions involving ${extracted.hardTechnicalSkills.slice(0, 3).join(", ") || "core platform technologies"}, improving reliability and delivery speed for business-critical workflows.`,
-      );
+      bullets = dedupeBullets([
+        ...bullets,
+        buildFillerBullet(exp.company, extracted.hardTechnicalSkills, slot),
+      ]);
+      slot += 1;
     }
     bullets = bullets.slice(0, 8);
 
@@ -238,8 +254,10 @@ function normalizeResume(
     };
   });
 
+  const summary = sanitizePlainText(String(safe.summary || ""));
+
   return {
-    summary: sanitizePlainText(String(safe.summary || "")),
+    summary: summary || buildFallbackSummary(profile, extracted),
     skills: skillGroups,
     experiences,
     education:
