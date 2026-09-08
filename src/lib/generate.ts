@@ -32,6 +32,14 @@ Hard constraints:
 - Sound human, not AI-generated.
 - Return ONLY valid compact JSON. Escape all double quotes inside strings. Do not wrap in markdown fences.
 
+Summary:
+- Write a polished professional summary of 4–6 sentences (~90–130 words). Never a one-liner or thin 1–2 sentence blurb.
+- Open with seniority + target role domain aligned to the JD (e.g. Senior Backend / Full Stack / AI Engineer).
+- Cover career arc briefly, core technical strengths that map to must-have JD skills, and how recent roles prepared the candidate for this position.
+- Include 1 sentence on collaboration, ownership, or delivery style relevant to the JD.
+- Close with clear intent for the target role/company type without naming a specific employer unless it appears in the JD company field.
+- Dense, confident, human prose — no buzzword stacking, no first person ("I"), no markdown.
+
 Skills:
 - Classify skills into MORE than 4 categories (5+ preferred), such as Languages, Frameworks/Libraries, Cloud/DevOps, Data/AI/ML, Databases, Tools/Practices.
 - Each category MUST have MORE than 5 skill items (6–10 preferred).
@@ -63,7 +71,7 @@ Process (internal — do not output these steps):
 1. Detect the main role domain from the JD: Backend, Frontend, Full Stack, AI, Data Science, ML, LLM, Mobile, or Hybrid.
 2. Extract must-have skills, preferred skills, seniority, domain requirements, ATS keywords, and business/ownership signals.
 3. Reposition the candidate's existing background to align with the role.
-4. Rewrite summary, skills, and experience for maximum fit.
+4. Write a full professional summary (4–6 sentences, ~90–130 words), then rewrite skills and experience for maximum fit.
 5. Emphasize the most relevant technologies, systems, and impact in the latest roles.
 6. Keep the full resume cohesive and credible from top to bottom.
 7. Choose ~20 keywords for bolding (plain strings only).
