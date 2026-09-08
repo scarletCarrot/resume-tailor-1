@@ -75,7 +75,7 @@ ${rawJd.slice(0, 20000)}`,
   });
 
   const content = completion.choices[0]?.message?.content;
-  if (!content) {
+  if (!content?.trim()) {
     throw new Error("Empty response while extracting job description.");
   }
 

@@ -30,8 +30,13 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Flow
 
 1. Profile is fixed in code (`src/lib/profile.ts`) for Karina Elizabeth Garcia Lozana
-2. Paste job URLs (one per line)
-3. The app scrapes each posting in parallel, extracts the JD, and writes a tailored resume + cover letter
+2. Paste job URLs (one per line) or paste a full job description
+3. Processing runs as **two short SSE requests** so proxies are less likely to idle-timeout:
+   - **prepare** — scrape (or use pasted JD) and extract structured fields
+   - **generate** — write resume + cover letter, validate, score ATS, and package downloads
+4. Each phase streams progress over SSE and sends a heartbeat every 15 seconds while work is in flight
+
+You can also paste a JD on a failed job to skip scraping and regenerate.
 
 ## Output
 
@@ -53,4 +58,4 @@ output/
 Each completed job shows an ATS score (/100) in the UI.
 Document files use `Resume-{FirstName}` / `Coverletter-{FirstName}`.
 Zip files are named `{Company}-{Role}.zip`.
-Download links appear after processing.
+Download links appear after processing (base64 over SSE, so they work on ephemeral serverless filesystems).

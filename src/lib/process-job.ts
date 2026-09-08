@@ -1,21 +1,21 @@
 import { scoreAtsMatch } from "./ats-score";
 import { extractJobDescription } from "./extract";
 import { generateTailoredPackage } from "./generate";
+import type { JobLogger } from "./job-log";
 import { saveJobPackage } from "./package";
 import { scrapeJobDescription } from "./scrape";
 import { validateAndFixResume } from "./validate-resume";
-import type { JobStep } from "./progress";
 import type { CandidateProfile, ExtractedJD, PersonalInfo } from "./types";
 
-export async function processOneJob(options: {
+export type PreparedJob = {
   index: number;
   jobUrl: string;
-  profile: CandidateProfile;
-  personal: PersonalInfo;
-  /** When provided, skip scrape and use this JD text */
-  manualJd?: string;
-  onStep: (step: JobStep, message: string) => void;
-}): Promise<{
+  rawText: string;
+  pageTitle: string;
+  extracted: ExtractedJD;
+};
+
+export type GeneratedJobResult = {
   index: number;
   jobUrl: string;
   company: string;
@@ -32,43 +32,76 @@ export async function processOneJob(options: {
   extracted: ExtractedJD;
   atsScore: number;
   atsSummary: string;
-}> {
-  const { index, jobUrl, profile, personal, manualJd, onStep } = options;
+};
+
+/** Phase 1: fetch (or accept pasted JD) and extract structured fields. */
+export async function prepareOneJob(options: {
+  index: number;
+  jobUrl: string;
+  manualJd?: string;
+  log: JobLogger;
+}): Promise<PreparedJob> {
+  const { index, jobUrl, manualJd, log } = options;
 
   let rawText: string;
   let pageTitle: string;
 
   const pasted = manualJd?.trim();
   if (pasted && pasted.length >= 80) {
-    onStep("scraping", "Using pasted job description (scrape skipped)…");
+    log.step("scraping", "Using pasted job description (scrape skipped)…");
     rawText = pasted.slice(0, 50000);
     pageTitle = `Manual JD for ${jobUrl}`;
-    onStep(
+    log.step(
       "fetch_jd",
       `Loaded manual JD (${rawText.length.toLocaleString()} chars)`,
     );
   } else {
-    onStep("scraping", "Scraping job page…");
+    log.step("scraping", "Scraping job page…");
     const scraped = await scrapeJobDescription(jobUrl);
     rawText = scraped.rawText;
     pageTitle = scraped.pageTitle;
-    onStep(
+    log.step(
       "fetch_jd",
       `Fetched JD (${rawText.length.toLocaleString()} chars)`,
     );
   }
 
-  onStep("extracting", "Extracting structured JD…");
+  log.step("extracting", "Extracting structured JD…");
   const extracted = await extractJobDescription(rawText, pageTitle, jobUrl);
+  log.info(
+    `Prepared ${extracted.company} · ${extracted.jobTitle} (${extracted.type})`,
+  );
 
-  onStep("generating", "Generating resume & cover letter…");
+  return {
+    index,
+    jobUrl,
+    rawText,
+    pageTitle,
+    extracted,
+  };
+}
+
+/** Phase 2: generate resume/cover letter, validate, score ATS, and package. */
+export async function generateOneJob(options: {
+  index: number;
+  jobUrl: string;
+  profile: CandidateProfile;
+  personal: PersonalInfo;
+  rawText: string;
+  extracted: ExtractedJD;
+  log: JobLogger;
+}): Promise<GeneratedJobResult> {
+  const { index, jobUrl, profile, personal, rawText, extracted, log } = options;
+
+  log.step("generating", "Generating resume & cover letter…");
   let tailored = await generateTailoredPackage(profile, extracted, rawText);
 
-  onStep("validating", "Validating resume format and content…");
+  log.step("validating", "Validating resume format and content…");
   let validation = validateAndFixResume(tailored, profile, extracted);
 
   if (!validation.ok) {
-    onStep("validating", "Fixing validation issues and regenerating…");
+    log.warn("Validation failed; regenerating once…");
+    log.step("validating", "Fixing validation issues and regenerating…");
     tailored = await generateTailoredPackage(profile, extracted, rawText);
     validation = validateAndFixResume(tailored, profile, extracted);
   }
@@ -87,7 +120,7 @@ export async function processOneJob(options: {
 
   const fixedCount = validation.issues.filter((i) => i.level === "fixed").length;
   const ats = scoreAtsMatch(tailored.resume, extracted, rawText);
-  onStep(
+  log.step(
     "zipping",
     `Validated${fixedCount ? ` (${fixedCount} fixes)` : ""} · ATS ${ats.score}/100 · packaging…`,
   );
@@ -100,6 +133,8 @@ export async function processOneJob(options: {
     personal,
     tailored,
   });
+
+  log.info(`Packaged ${saved.zipName} · ATS ${ats.score}/100`);
 
   return {
     index,

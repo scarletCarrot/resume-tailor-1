@@ -85,6 +85,26 @@ export interface JobResult {
   error?: string;
 }
 
-export interface TailorRequest {
-  jobUrls: string[];
+export type TailorPhase = "prepare" | "generate";
+
+export interface PreparedJobInput {
+  index: number;
+  jobUrl: string;
+  rawText: string;
+  pageTitle: string;
+  extracted: ExtractedJD;
 }
+
+export type TailorPrepareRequest = {
+  phase: "prepare";
+  jobUrls: string[];
+  indices?: number[];
+  manualJds?: string[];
+};
+
+export type TailorGenerateRequest = {
+  phase: "generate";
+  preparedJobs: PreparedJobInput[];
+};
+
+export type TailorRequest = TailorPrepareRequest | TailorGenerateRequest;

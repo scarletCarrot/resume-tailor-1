@@ -4,9 +4,11 @@ import { FormEvent, useMemo, useState } from "react";
 import {
   JOB_STEPS,
   JOB_STEP_LABELS,
+  PREPARE_STEPS,
   type JobStep,
   type ProgressEvent,
 } from "@/lib/progress";
+import type { PreparedJobInput } from "@/lib/types";
 
 type StepStatus = "pending" | "active" | "done" | "error";
 type InputMode = "urls" | "manual";
@@ -115,6 +117,25 @@ function markStepProgress(
   };
 }
 
+function markPrepareDone(
+  job: JobProgress,
+  data: Extract<ProgressEvent, { type: "prepare_done" }>,
+): JobProgress {
+  const stepStatuses = { ...job.stepStatuses };
+  for (const step of PREPARE_STEPS) stepStatuses[step] = "done";
+
+  return {
+    ...job,
+    status: "running",
+    currentStep: "extracting",
+    stepStatuses,
+    stepMessage: `Prepared · ${data.extracted.company}`,
+    company: data.extracted.company,
+    jobTitle: data.extracted.jobTitle,
+    error: undefined,
+  };
+}
+
 function markJobDone(
   job: JobProgress,
   data: Extract<ProgressEvent, { type: "job_done" }>,
@@ -169,6 +190,41 @@ function hostFromUrl(url: string) {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
     return url;
+  }
+}
+
+type SseHandlers = {
+  onEvent: (event: ProgressEvent) => void;
+};
+
+async function consumeTailorSse(
+  response: Response,
+  handlers: SseHandlers,
+): Promise<void> {
+  if (!response.ok || !response.body) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.error || "Failed to start processing.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() || "";
+
+    for (const chunk of chunks) {
+      const line = chunk
+        .split("\n")
+        .find((entry) => entry.startsWith("data: "));
+      if (!line) continue;
+      handlers.onEvent(JSON.parse(line.slice(6)) as ProgressEvent);
+    }
   }
 }
 
@@ -270,7 +326,7 @@ export default function ResumeForm() {
       setRetryingIndices({});
       setLoading(true);
       setStatus(
-        `Running ${targets.length} job${targets.length > 1 ? "s" : ""} in parallel`,
+        `Preparing ${targets.length} job${targets.length > 1 ? "s" : ""}…`,
       );
     } else {
       const target = targets[0];
@@ -284,40 +340,95 @@ export default function ResumeForm() {
     }
 
     try {
-      const response = await fetch("/api/tailor", {
+      const preparedJobs: PreparedJobInput[] = [];
+      let prepareFailed = 0;
+      let fatalError: string | null = null;
+
+      const prepareResponse = await fetch("/api/tailor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          phase: "prepare",
           jobUrls: targets.map((t) => t.url),
           indices: targets.map((t) => t.index),
           manualJds: targets.map((t) => t.manualJd || ""),
         }),
       });
 
-      if (!response.ok || !response.body) {
-        const data = await response.json().catch(() => null);
-        throw new Error(data?.error || "Failed to start processing.");
+      await consumeTailorSse(prepareResponse, {
+        onEvent: (event) => {
+          if (event.type === "heartbeat") return;
+
+          if (event.type === "step") {
+            patchJob(event.index, (job) =>
+              markStepProgress(job, event.step, event.message),
+            );
+          } else if (event.type === "prepare_done") {
+            preparedJobs.push({
+              index: event.index,
+              jobUrl: event.jobUrl,
+              rawText: event.rawText,
+              pageTitle: event.pageTitle,
+              extracted: {
+                company: event.extracted.company,
+                jobTitle: event.extracted.jobTitle,
+                summary: event.extracted.summary,
+                type: event.extracted
+                  .type as PreparedJobInput["extracted"]["type"],
+                salaryExpectation: event.extracted.salaryExpectation,
+                workMode: event.extracted
+                  .workMode as PreparedJobInput["extracted"]["workMode"],
+                hardTechnicalSkills: event.extracted.hardTechnicalSkills,
+                softSkills: event.extracted.softSkills,
+              },
+            });
+            patchJob(event.index, (job) => markPrepareDone(job, event));
+          } else if (event.type === "job_error") {
+            prepareFailed += 1;
+            patchJob(event.index, (job) => markJobError(job, event));
+          } else if (event.type === "done") {
+            setStatus(
+              event.succeeded
+                ? `Prepared ${event.succeeded} · generating resumes…`
+                : `Prepare finished · ${event.failed} failed`,
+            );
+          } else if (event.type === "fatal") {
+            fatalError = event.error;
+            setError(event.error);
+            setStatus(null);
+          }
+        },
+      });
+
+      if (fatalError) return;
+
+      if (!preparedJobs.length) {
+        setStatus(
+          mode === "retry"
+            ? `Retry finished · job failed`
+            : `Finished · 0 succeeded · ${prepareFailed || targets.length} failed`,
+        );
+        return;
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      setStatus(
+        `Generating ${preparedJobs.length} resume${
+          preparedJobs.length > 1 ? "s" : ""
+        }…`,
+      );
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const generateResponse = await fetch("/api/tailor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phase: "generate",
+          preparedJobs,
+        }),
+      });
 
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() || "";
-
-        for (const chunk of chunks) {
-          const line = chunk
-            .split("\n")
-            .find((entry) => entry.startsWith("data: "));
-          if (!line) continue;
-
-          const event = JSON.parse(line.slice(6)) as ProgressEvent;
+      await consumeTailorSse(generateResponse, {
+        onEvent: (event) => {
+          if (event.type === "heartbeat" || event.type === "log") return;
 
           if (event.type === "step") {
             patchJob(event.index, (job) =>
@@ -328,21 +439,22 @@ export default function ResumeForm() {
           } else if (event.type === "job_error") {
             patchJob(event.index, (job) => markJobError(job, event));
           } else if (event.type === "done") {
+            const failedTotal = event.failed + prepareFailed;
             setStatus(
               mode === "retry"
                 ? event.succeeded
                   ? `Retry finished · job succeeded`
                   : `Retry finished · job failed`
                 : `Finished · ${event.succeeded} succeeded${
-                    event.failed ? ` · ${event.failed} failed` : ""
+                    failedTotal ? ` · ${failedTotal} failed` : ""
                   }`,
             );
           } else if (event.type === "fatal") {
             setError(event.error);
             setStatus(null);
           }
-        }
-      }
+        },
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
       setStatus(null);
@@ -656,7 +768,10 @@ export default function ResumeForm() {
 
                   {job.status === "error" && (
                     <div className="manual-jd-panel">
-                      <label className="manual-jd-label" htmlFor={`manual-jd-${job.index}`}>
+                      <label
+                        className="manual-jd-label"
+                        htmlFor={`manual-jd-${job.index}`}
+                      >
                         {job.jobUrl === "Pasted job description"
                           ? "Edit the pasted job description and retry"
                           : "Paste job description (for blocked / captcha pages)"}
