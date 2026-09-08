@@ -99,6 +99,13 @@ export function dedupeBullets(bullets: string[]): string[] {
   return unique;
 }
 
+/** Declining bullet counts by experience order (most recent first). */
+export const EXPERIENCE_BULLET_TARGETS = [10, 7, 5, 4, 3] as const;
+
+export function targetBulletCount(experienceIndex: number): number {
+  return EXPERIENCE_BULLET_TARGETS[experienceIndex] ?? 3;
+}
+
 /** Fallback professional summary when the model omits or truncates one. */
 export function buildFallbackSummary(
   profile: CandidateProfile,
@@ -178,7 +185,15 @@ export function validateAndFixResume(
   const skills = sanitizeSkills(resume.skills);
   const keywords = resume.keywords
     .map((k) => sanitizePlainText(k))
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, 20);
+
+  if (resume.keywords.length > 20) {
+    issues.push({
+      level: "fixed",
+      message: "Trimmed bold keywords to about 20 items.",
+    });
+  }
 
   if (!summary || wordCount(summary) < 20) {
     issues.push({
@@ -195,18 +210,18 @@ export function validateAndFixResume(
     });
   }
 
-  if (skills.length < 3) {
+  if (skills.length < 5) {
     issues.push({
       level: "warning",
-      message: "Skills should be grouped into at least 3 categories.",
+      message: "Skills should be grouped into more than 4 categories.",
     });
   }
 
   for (const group of skills) {
-    if (group.items.length < 2) {
+    if (group.items.length <= 5) {
       issues.push({
         level: "warning",
-        message: `Skill group "${group.category}" has fewer than 2 items.`,
+        message: `Skill group "${group.category}" should have more than 5 items.`,
       });
     }
   }
@@ -266,13 +281,14 @@ export function validateAndFixResume(
       overview = `${exp.company} delivers software products for its customers in a ${exp.location.toLowerCase()} environment; as ${title}, owned feature delivery and technical execution across core product workflows.`;
     }
 
-    if (bullets.length < 7) {
+    const bulletTarget = targetBulletCount(index);
+    if (bullets.length < bulletTarget) {
       issues.push({
         level: "fixed",
-        message: `Added missing bullets for ${exp.company} (need 7–8).`,
+        message: `Added missing bullets for ${exp.company} (need ${bulletTarget}).`,
       });
       let slot = 0;
-      while (bullets.length < 7) {
+      while (bullets.length < bulletTarget) {
         bullets = dedupeBullets([
           ...bullets,
           buildFillerBullet(exp.company, extracted.hardTechnicalSkills, slot),
@@ -281,19 +297,19 @@ export function validateAndFixResume(
       }
     }
 
-    if (bullets.length > 8) {
+    if (bullets.length > bulletTarget) {
       issues.push({
         level: "fixed",
-        message: `Trimmed ${exp.company} experience to 8 bullets.`,
+        message: `Trimmed ${exp.company} experience to ${bulletTarget} bullets.`,
       });
-      bullets = bullets.slice(0, 8);
+      bullets = bullets.slice(0, bulletTarget);
     }
 
     for (const [j, bullet] of bullets.entries()) {
-      if (wordCount(bullet) < 12) {
+      if (wordCount(bullet) < 18) {
         issues.push({
           level: "warning",
-          message: `${exp.company} bullet ${j + 1} is shorter than expected.`,
+          message: `${exp.company} bullet ${j + 1} is shorter than expected (aim 20–30 words).`,
         });
       }
       if (/\*\*|__/.test(bullet)) {
