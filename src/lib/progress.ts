@@ -102,10 +102,21 @@ export type ProgressEvent =
       phase?: TailorPhase;
     }
   | {
+      type: "job_duplicate";
+      index: number;
+      jobUrl: string;
+      company: string;
+      jobTitle: string;
+      /** When this company was first tailored, ms epoch. */
+      firstSeenAt: number;
+    }
+  | {
       type: "done";
       phase: TailorPhase;
       succeeded: number;
       failed: number;
+      /** Generate phase only: jobs skipped because the company was a repeat. */
+      duplicates?: number;
     }
   | {
       type: "fatal";

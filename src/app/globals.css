@@ -336,6 +336,11 @@ button {
   background: var(--danger-soft);
 }
 
+.job-row.status-duplicate {
+  border-color: rgba(224, 180, 92, 0.4);
+  background: rgba(224, 180, 92, 0.08);
+}
+
 .job-list-main {
   padding: 1rem 1.05rem 1.05rem;
   display: grid;
@@ -406,6 +411,12 @@ button {
 .badge-queued {
   border-color: var(--line-strong);
   color: var(--muted);
+}
+
+.badge-duplicate {
+  border-color: rgba(224, 180, 92, 0.45);
+  color: var(--warn);
+  background: rgba(224, 180, 92, 0.12);
 }
 
 .ats-score {
@@ -531,6 +542,17 @@ button {
   border: 1px solid rgba(240, 113, 120, 0.35);
   background: rgba(0, 0, 0, 0.2);
   color: var(--danger);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.job-duplicate {
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid rgba(224, 180, 92, 0.35);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--warn);
   font-size: 0.84rem;
   line-height: 1.4;
   word-break: break-word;

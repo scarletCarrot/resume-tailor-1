@@ -136,7 +136,7 @@ async function runGeneratePhase(
       });
 
       try {
-        const result = await generateOneJob({
+        const outcome = await generateOneJob({
           index: job.index,
           jobUrl: job.jobUrl,
           profile,
@@ -146,6 +146,19 @@ async function runGeneratePhase(
           log,
         });
 
+        if (outcome.kind === "duplicate") {
+          send({
+            type: "job_duplicate",
+            index: outcome.result.index,
+            jobUrl: outcome.result.jobUrl,
+            company: outcome.result.company,
+            jobTitle: outcome.result.jobTitle,
+            firstSeenAt: outcome.result.firstSeenAt,
+          });
+          return { ok: true as const, duplicate: true as const };
+        }
+
+        const result = outcome.result;
         send({
           type: "job_done",
           index: result.index,
@@ -162,7 +175,7 @@ async function runGeneratePhase(
           extracted: result.extracted,
         });
 
-        return { ok: true as const };
+        return { ok: true as const, duplicate: false as const };
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Unknown error for this job.";
@@ -175,17 +188,19 @@ async function runGeneratePhase(
           error: message,
           phase: "generate",
         });
-        return { ok: false as const };
+        return { ok: false as const, duplicate: false as const };
       }
     }),
   );
 
-  const succeeded = outcomes.filter((o) => o.ok).length;
+  const duplicates = outcomes.filter((o) => o.ok && o.duplicate).length;
+  const succeeded = outcomes.filter((o) => o.ok && !o.duplicate).length;
   send({
     type: "done",
     phase: "generate",
     succeeded,
-    failed: outcomes.length - succeeded,
+    failed: outcomes.length - succeeded - duplicates,
+    duplicates,
   });
 }
 

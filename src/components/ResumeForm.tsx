@@ -22,7 +22,7 @@ type JobDownloads = {
 type JobProgress = {
   index: number;
   jobUrl: string;
-  status: "queued" | "running" | "done" | "error";
+  status: "queued" | "running" | "done" | "error" | "duplicate";
   currentStep: JobStep | null;
   stepStatuses: Record<JobStep, StepStatus>;
   stepMessage: string;
@@ -36,6 +36,7 @@ type JobProgress = {
   jobTitle?: string;
   atsScore?: number;
   error?: string;
+  duplicateMessage?: string;
 };
 
 const DOCX_MIME =
@@ -185,6 +186,25 @@ function markJobError(
   };
 }
 
+function markJobDuplicate(
+  job: JobProgress,
+  data: Extract<ProgressEvent, { type: "job_duplicate" }>,
+): JobProgress {
+  const firstSeen = new Date(data.firstSeenAt).toLocaleDateString();
+  const message = `Skipped — ${data.company} was already tailored on ${firstSeen}. Duplicate companies are blocked for 14 days.`;
+
+  return {
+    ...job,
+    status: "duplicate",
+    currentStep: null,
+    stepMessage: "Duplicate company — skipped",
+    company: data.company,
+    jobTitle: data.jobTitle,
+    duplicateMessage: message,
+    error: undefined,
+  };
+}
+
 function hostFromUrl(url: string) {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -264,7 +284,9 @@ function StatusBadge({ status }: { status: JobProgress["status"] }) {
         ? "Running"
         : status === "done"
           ? "Done"
-          : "Failed";
+          : status === "duplicate"
+            ? "Duplicate"
+            : "Failed";
   return <span className={`badge badge-${status}`}>{label}</span>;
 }
 
@@ -294,7 +316,8 @@ export default function ResumeForm() {
     const done = jobs.filter((j) => j.status === "done").length;
     const failed = jobs.filter((j) => j.status === "error").length;
     const running = jobs.filter((j) => j.status === "running").length;
-    return { done, failed, running, total: jobs.length };
+    const duplicate = jobs.filter((j) => j.status === "duplicate").length;
+    return { done, failed, running, duplicate, total: jobs.length };
   }, [jobs]);
 
   function patchJob(index: number, updater: (job: JobProgress) => JobProgress) {
@@ -436,18 +459,25 @@ export default function ResumeForm() {
             );
           } else if (event.type === "job_done") {
             patchJob(event.index, (job) => markJobDone(job, event));
+          } else if (event.type === "job_duplicate") {
+            patchJob(event.index, (job) => markJobDuplicate(job, event));
           } else if (event.type === "job_error") {
             patchJob(event.index, (job) => markJobError(job, event));
           } else if (event.type === "done") {
             const failedTotal = event.failed + prepareFailed;
+            const duplicates = event.duplicates ?? 0;
             setStatus(
               mode === "retry"
                 ? event.succeeded
                   ? `Retry finished · job succeeded`
-                  : `Retry finished · job failed`
+                  : duplicates
+                    ? `Retry finished · duplicate company, skipped`
+                    : `Retry finished · job failed`
                 : `Finished · ${event.succeeded} succeeded${
-                    failedTotal ? ` · ${failedTotal} failed` : ""
-                  }`,
+                    duplicates
+                      ? ` · ${duplicates} duplicate${duplicates > 1 ? "s" : ""} skipped`
+                      : ""
+                  }${failedTotal ? ` · ${failedTotal} failed` : ""}`,
             );
           } else if (event.type === "fatal") {
             setError(event.error);
@@ -636,7 +666,7 @@ export default function ResumeForm() {
             <p className="hint">
               {jobs.length === 0
                 ? "Results appear here after you generate."
-                : `${summary.done} done · ${summary.running} running · ${summary.failed} failed`}
+                : `${summary.done} done · ${summary.running} running · ${summary.duplicate} duplicate · ${summary.failed} failed`}
             </p>
           </div>
           {completedDownloads.length > 0 && (
@@ -729,6 +759,9 @@ export default function ResumeForm() {
                     <p className="job-live">{job.stepMessage}</p>
                   )}
                   {job.error && <p className="job-error">{job.error}</p>}
+                  {job.duplicateMessage && (
+                    <p className="job-duplicate">{job.duplicateMessage}</p>
+                  )}
 
                   {job.status === "done" &&
                     job.downloads &&

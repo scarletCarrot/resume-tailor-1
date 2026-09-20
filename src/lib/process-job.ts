@@ -1,4 +1,5 @@
 import { scoreAtsMatch } from "./ats-score";
+import { checkDuplicateCompany, recordCompany } from "./company-dedupe";
 import { extractJobDescription } from "./extract";
 import { generateTailoredPackage } from "./generate";
 import type { JobLogger } from "./job-log";
@@ -81,6 +82,19 @@ export async function prepareOneJob(options: {
   };
 }
 
+export type DuplicateJobResult = {
+  index: number;
+  jobUrl: string;
+  company: string;
+  jobTitle: string;
+  /** When this company was first tailored, ms epoch. */
+  firstSeenAt: number;
+};
+
+export type GenerateOutcome =
+  | { kind: "generated"; result: GeneratedJobResult }
+  | { kind: "duplicate"; result: DuplicateJobResult };
+
 /** Phase 2: generate resume/cover letter, validate, score ATS, and package. */
 export async function generateOneJob(options: {
   index: number;
@@ -90,8 +104,26 @@ export async function generateOneJob(options: {
   rawText: string;
   extracted: ExtractedJD;
   log: JobLogger;
-}): Promise<GeneratedJobResult> {
+}): Promise<GenerateOutcome> {
   const { index, jobUrl, profile, personal, rawText, extracted, log } = options;
+
+  const dupe = await checkDuplicateCompany(extracted.company);
+  if (dupe.isDuplicate) {
+    const firstSeen = new Date(dupe.firstSeenAt).toLocaleDateString();
+    log.warn(
+      `Skipped — ${extracted.company} was already tailored on ${firstSeen} (duplicates blocked for 14 days).`,
+    );
+    return {
+      kind: "duplicate",
+      result: {
+        index,
+        jobUrl,
+        company: extracted.company,
+        jobTitle: extracted.jobTitle,
+        firstSeenAt: dupe.firstSeenAt,
+      },
+    };
+  }
 
   log.step("generating", "Generating resume & cover letter…");
   let tailored = await generateTailoredPackage(profile, extracted, rawText);
@@ -134,20 +166,24 @@ export async function generateOneJob(options: {
     tailored,
   });
 
+  await recordCompany(extracted.company);
   log.info(`Packaged ${saved.zipName} · ATS ${ats.score}/100`);
 
   return {
-    index,
-    jobUrl,
-    company: saved.company,
-    zipName: saved.zipName,
-    folderName: saved.folderName,
-    resumeDocxName: saved.resumeDocxName,
-    resumePdfName: saved.resumePdfName,
-    coverLetterDocxName: saved.coverLetterDocxName,
-    downloads: saved.downloads,
-    extracted,
-    atsScore: ats.score,
-    atsSummary: `ATS score ${ats.score}/100`,
+    kind: "generated",
+    result: {
+      index,
+      jobUrl,
+      company: saved.company,
+      zipName: saved.zipName,
+      folderName: saved.folderName,
+      resumeDocxName: saved.resumeDocxName,
+      resumePdfName: saved.resumePdfName,
+      coverLetterDocxName: saved.coverLetterDocxName,
+      downloads: saved.downloads,
+      extracted,
+      atsScore: ats.score,
+      atsSummary: `ATS score ${ats.score}/100`,
+    },
   };
 }
