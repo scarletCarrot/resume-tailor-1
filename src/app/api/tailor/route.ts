@@ -144,6 +144,7 @@ async function runGeneratePhase(
           rawText: job.rawText,
           extracted: job.extracted,
           log,
+          override: job.override,
         });
 
         if (outcome.kind === "duplicate") {

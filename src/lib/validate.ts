@@ -70,6 +70,7 @@ const preparedJobSchema = z.object({
   rawText: z.string().min(80),
   pageTitle: z.string().default(""),
   extracted: extractedJdSchema,
+  override: z.boolean().optional(),
 });
 
 const generateRequestSchema = z.object({

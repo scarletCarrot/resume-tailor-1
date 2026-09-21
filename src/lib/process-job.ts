@@ -104,25 +104,32 @@ export async function generateOneJob(options: {
   rawText: string;
   extracted: ExtractedJD;
   log: JobLogger;
+  /** Skip the duplicate-company check (user chose to override). */
+  override?: boolean;
 }): Promise<GenerateOutcome> {
-  const { index, jobUrl, profile, personal, rawText, extracted, log } = options;
+  const { index, jobUrl, profile, personal, rawText, extracted, log, override } =
+    options;
 
-  const dupe = await checkDuplicateCompany(extracted.company);
-  if (dupe.isDuplicate) {
-    const firstSeen = new Date(dupe.firstSeenAt).toLocaleDateString();
-    log.warn(
-      `Skipped — ${extracted.company} was already tailored on ${firstSeen} (duplicates blocked for 14 days).`,
-    );
-    return {
-      kind: "duplicate",
-      result: {
-        index,
-        jobUrl,
-        company: extracted.company,
-        jobTitle: extracted.jobTitle,
-        firstSeenAt: dupe.firstSeenAt,
-      },
-    };
+  if (!override) {
+    const dupe = await checkDuplicateCompany(extracted.company);
+    if (dupe.isDuplicate) {
+      const firstSeen = new Date(dupe.firstSeenAt).toLocaleDateString();
+      log.warn(
+        `Skipped — ${extracted.company} was already tailored on ${firstSeen} (duplicates blocked for 14 days).`,
+      );
+      return {
+        kind: "duplicate",
+        result: {
+          index,
+          jobUrl,
+          company: extracted.company,
+          jobTitle: extracted.jobTitle,
+          firstSeenAt: dupe.firstSeenAt,
+        },
+      };
+    }
+  } else {
+    log.warn(`Override — generating for ${extracted.company} despite duplicate.`);
   }
 
   log.step("generating", "Generating resume & cover letter…");

@@ -37,6 +37,8 @@ type JobProgress = {
   atsScore?: number;
   error?: string;
   duplicateMessage?: string;
+  /** Retained from prepare_done so an override can regenerate without re-scraping. */
+  prepared?: { rawText: string; extracted: PreparedJobInput["extracted"] };
 };
 
 const DOCX_MIME =
@@ -47,6 +49,22 @@ function base64ToObjectUrl(base64: string, mime: string): string {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
+/** SSE events carry `type`/`workMode` as plain strings; narrow back to the branded unions. */
+function toPreparedExtracted(
+  extracted: Extract<ProgressEvent, { type: "prepare_done" }>["extracted"],
+): PreparedJobInput["extracted"] {
+  return {
+    company: extracted.company,
+    jobTitle: extracted.jobTitle,
+    summary: extracted.summary,
+    type: extracted.type as PreparedJobInput["extracted"]["type"],
+    salaryExpectation: extracted.salaryExpectation,
+    workMode: extracted.workMode as PreparedJobInput["extracted"]["workMode"],
+    hardTechnicalSkills: extracted.hardTechnicalSkills,
+    softSkills: extracted.softSkills,
+  };
 }
 
 function downloadsFromEvent(
@@ -115,6 +133,7 @@ function markStepProgress(
     stepStatuses,
     stepMessage: message,
     error: undefined,
+    duplicateMessage: undefined,
   };
 }
 
@@ -134,6 +153,8 @@ function markPrepareDone(
     company: data.extracted.company,
     jobTitle: data.extracted.jobTitle,
     error: undefined,
+    duplicateMessage: undefined,
+    prepared: { rawText: data.rawText, extracted: toPreparedExtracted(data.extracted) },
   };
 }
 
@@ -166,6 +187,7 @@ function markJobDone(
     jobTitle: data.extracted.jobTitle,
     atsScore: data.atsScore,
     error: undefined,
+    duplicateMessage: undefined,
   };
 }
 
@@ -183,6 +205,7 @@ function markJobError(
     stepStatuses,
     stepMessage: data.error,
     error: data.error,
+    duplicateMessage: undefined,
   };
 }
 
@@ -330,6 +353,69 @@ export default function ResumeForm() {
     setManualJds((prev) => ({ ...prev, [index]: value }));
   }
 
+  async function generateFromPrepared(
+    preparedJobs: PreparedJobInput[],
+    options: { mode: "batch" | "retry" | "override"; prepareFailed: number },
+  ) {
+    const { mode, prepareFailed } = options;
+
+    setStatus(
+      `Generating ${preparedJobs.length} resume${
+        preparedJobs.length > 1 ? "s" : ""
+      }…`,
+    );
+
+    const generateResponse = await fetch("/api/tailor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phase: "generate",
+        preparedJobs,
+      }),
+    });
+
+    await consumeTailorSse(generateResponse, {
+      onEvent: (event) => {
+        if (event.type === "heartbeat" || event.type === "log") return;
+
+        if (event.type === "step") {
+          patchJob(event.index, (job) =>
+            markStepProgress(job, event.step, event.message),
+          );
+        } else if (event.type === "job_done") {
+          patchJob(event.index, (job) => markJobDone(job, event));
+        } else if (event.type === "job_duplicate") {
+          patchJob(event.index, (job) => markJobDuplicate(job, event));
+        } else if (event.type === "job_error") {
+          patchJob(event.index, (job) => markJobError(job, event));
+        } else if (event.type === "done") {
+          const failedTotal = event.failed + prepareFailed;
+          const duplicates = event.duplicates ?? 0;
+          setStatus(
+            mode === "batch"
+              ? `Finished · ${event.succeeded} succeeded${
+                  duplicates
+                    ? ` · ${duplicates} duplicate${duplicates > 1 ? "s" : ""} skipped`
+                    : ""
+                }${failedTotal ? ` · ${failedTotal} failed` : ""}`
+              : mode === "override"
+                ? event.succeeded
+                  ? `Override finished · job generated`
+                  : `Override finished · job failed`
+                : event.succeeded
+                  ? `Retry finished · job succeeded`
+                  : duplicates
+                    ? `Retry finished · duplicate company, skipped`
+                    : `Retry finished · job failed`,
+          );
+        } else if (event.type === "fatal") {
+          setError(event.error);
+          setStatus(null);
+        }
+      },
+    });
+  }
+
   async function runJobs(
     targets: Array<{ url: string; index: number; manualJd?: string }>,
     mode: "batch" | "retry",
@@ -392,18 +478,7 @@ export default function ResumeForm() {
               jobUrl: event.jobUrl,
               rawText: event.rawText,
               pageTitle: event.pageTitle,
-              extracted: {
-                company: event.extracted.company,
-                jobTitle: event.extracted.jobTitle,
-                summary: event.extracted.summary,
-                type: event.extracted
-                  .type as PreparedJobInput["extracted"]["type"],
-                salaryExpectation: event.extracted.salaryExpectation,
-                workMode: event.extracted
-                  .workMode as PreparedJobInput["extracted"]["workMode"],
-                hardTechnicalSkills: event.extracted.hardTechnicalSkills,
-                softSkills: event.extracted.softSkills,
-              },
+              extracted: toPreparedExtracted(event.extracted),
             });
             patchJob(event.index, (job) => markPrepareDone(job, event));
           } else if (event.type === "job_error") {
@@ -434,57 +509,7 @@ export default function ResumeForm() {
         return;
       }
 
-      setStatus(
-        `Generating ${preparedJobs.length} resume${
-          preparedJobs.length > 1 ? "s" : ""
-        }…`,
-      );
-
-      const generateResponse = await fetch("/api/tailor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phase: "generate",
-          preparedJobs,
-        }),
-      });
-
-      await consumeTailorSse(generateResponse, {
-        onEvent: (event) => {
-          if (event.type === "heartbeat" || event.type === "log") return;
-
-          if (event.type === "step") {
-            patchJob(event.index, (job) =>
-              markStepProgress(job, event.step, event.message),
-            );
-          } else if (event.type === "job_done") {
-            patchJob(event.index, (job) => markJobDone(job, event));
-          } else if (event.type === "job_duplicate") {
-            patchJob(event.index, (job) => markJobDuplicate(job, event));
-          } else if (event.type === "job_error") {
-            patchJob(event.index, (job) => markJobError(job, event));
-          } else if (event.type === "done") {
-            const failedTotal = event.failed + prepareFailed;
-            const duplicates = event.duplicates ?? 0;
-            setStatus(
-              mode === "retry"
-                ? event.succeeded
-                  ? `Retry finished · job succeeded`
-                  : duplicates
-                    ? `Retry finished · duplicate company, skipped`
-                    : `Retry finished · job failed`
-                : `Finished · ${event.succeeded} succeeded${
-                    duplicates
-                      ? ` · ${duplicates} duplicate${duplicates > 1 ? "s" : ""} skipped`
-                      : ""
-                  }${failedTotal ? ` · ${failedTotal} failed` : ""}`,
-            );
-          } else if (event.type === "fatal") {
-            setError(event.error);
-            setStatus(null);
-          }
-        },
-      });
+      await generateFromPrepared(preparedJobs, { mode, prepareFailed });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
       setStatus(null);
@@ -554,6 +579,56 @@ export default function ResumeForm() {
       ],
       "retry",
     );
+  }
+
+  async function onOverride(job: JobProgress) {
+    if (retryingIndices[job.index] || job.status === "running") return;
+    if (!job.prepared) {
+      setError(`Job ${job.index}: nothing prepared to generate — use Retry instead.`);
+      return;
+    }
+
+    setError(null);
+    setRetryingIndices((prev) => ({ ...prev, [job.index]: true }));
+    patchJob(job.index, (current) => ({
+      ...current,
+      status: "running",
+      stepStatuses: {
+        ...current.stepStatuses,
+        scraping: "done",
+        fetch_jd: "done",
+        extracting: "done",
+      },
+      stepMessage: "Overriding duplicate check — generating…",
+      duplicateMessage: undefined,
+      error: undefined,
+    }));
+    setStatus(`Overriding duplicate for job ${job.index}…`);
+
+    try {
+      await generateFromPrepared(
+        [
+          {
+            index: job.index,
+            jobUrl: job.jobUrl,
+            rawText: job.prepared.rawText,
+            pageTitle: "",
+            extracted: job.prepared.extracted,
+            override: true,
+          },
+        ],
+        { mode: "override", prepareFailed: 0 },
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unexpected error");
+      setStatus(null);
+    } finally {
+      setRetryingIndices((prev) => {
+        const next = { ...prev };
+        delete next[job.index];
+        return next;
+      });
+    }
   }
 
   const hasActiveRetries = Object.keys(retryingIndices).length > 0;
@@ -761,6 +836,22 @@ export default function ResumeForm() {
                   {job.error && <p className="job-error">{job.error}</p>}
                   {job.duplicateMessage && (
                     <p className="job-duplicate">{job.duplicateMessage}</p>
+                  )}
+                  {job.status === "duplicate" && (
+                    <div className="retry-row">
+                      <button
+                        type="button"
+                        className="retry-btn primary-ghost"
+                        disabled={Boolean(retryingIndices[job.index])}
+                        onClick={() => void onOverride(job)}
+                        title="Skip the duplicate check and generate this resume anyway"
+                      >
+                        <RetryIcon />
+                        {retryingIndices[job.index]
+                          ? "Generating…"
+                          : "Override and generate anyway"}
+                      </button>
+                    </div>
                   )}
 
                   {job.status === "done" &&

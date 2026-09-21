@@ -93,6 +93,8 @@ export interface PreparedJobInput {
   rawText: string;
   pageTitle: string;
   extracted: ExtractedJD;
+  /** Skip the duplicate-company check for this job (user chose to override). */
+  override?: boolean;
 }
 
 export type TailorPrepareRequest = {
