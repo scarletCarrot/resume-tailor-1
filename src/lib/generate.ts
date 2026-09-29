@@ -6,7 +6,7 @@ import type {
   TailoredResume,
 } from "./types";
 import { tailorExperienceTitle } from "./job-title";
-import { getLlmClient, getLlmModel } from "./llm";
+import { chatJson } from "./llm";
 import { parseModelJson } from "./parse-json";
 import {
   buildFallbackSummary,
@@ -94,15 +94,15 @@ export async function generateTailoredPackage(
   extracted: ExtractedJD,
   rawJd: string,
 ): Promise<TailoredPackage> {
-  const client = getLlmClient();
-  const model = getLlmModel();
+  // Keep the JD snippet modest — large prompts + reasoning models are what
+  // push free Vercel past its 300s limit.
   const userPayload = JSON.stringify({
     candidate: profile,
     extractedJd: extracted,
-    rawJobDescription: rawJd.slice(0, 12000),
+    rawJobDescription: rawJd.slice(0, 8000),
   });
 
-  let content = await requestJson(client, model, [
+  let content = await requestJson([
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: userPayload },
   ]);
@@ -111,7 +111,7 @@ export async function generateTailoredPackage(
   try {
     parsed = parseModelJson<TailoredPackage>(content);
   } catch (firstError) {
-    content = await requestJson(client, model, [
+    content = await requestJson([
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPayload },
       { role: "assistant", content },
@@ -150,22 +150,14 @@ export async function generateTailoredPackage(
 }
 
 async function requestJson(
-  client: ReturnType<typeof getLlmClient>,
-  model: string,
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
 ): Promise<string> {
-  const completion = await client.chat.completions.create({
-    model,
-    temperature: 0.3,
-    response_format: { type: "json_object" },
+  return chatJson({
     messages,
+    temperature: 0.3,
+    maxTokens: 8192,
+    emptyError: "Empty response while generating tailored resume.",
   });
-
-  const content = completion.choices[0]?.message?.content;
-  if (!content?.trim()) {
-    throw new Error("Empty response while generating tailored resume.");
-  }
-  return content;
 }
 
 function normalizeSkills(

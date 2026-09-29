@@ -1,5 +1,5 @@
 import type { ExtractedJD, JobType, WorkMode } from "./types";
-import { getLlmClient, getLlmModel } from "./llm";
+import { chatJson } from "./llm";
 import { parseModelJson } from "./parse-json";
 
 const JOB_TYPES: JobType[] = [
@@ -40,12 +40,10 @@ export async function extractJobDescription(
   pageTitle: string,
   jobUrl: string,
 ): Promise<ExtractedJD> {
-  const client = getLlmClient();
-
-  const completion = await client.chat.completions.create({
-    model: getLlmModel(),
+  const content = await chatJson({
     temperature: 0.2,
-    response_format: { type: "json_object" },
+    maxTokens: 2048,
+    emptyError: "Empty response while extracting job description.",
     messages: [
       {
         role: "system",
@@ -69,15 +67,10 @@ Escape quotes inside strings.`,
 Page title: ${pageTitle}
 
 Job posting text:
-${rawJd.slice(0, 20000)}`,
+${rawJd.slice(0, 16000)}`,
       },
     ],
   });
-
-  const content = completion.choices[0]?.message?.content;
-  if (!content?.trim()) {
-    throw new Error("Empty response while extracting job description.");
-  }
 
   const parsed = parseModelJson<
     Partial<ExtractedJD> & {
