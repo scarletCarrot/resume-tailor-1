@@ -358,62 +358,94 @@ export default function ResumeForm() {
     options: { mode: "batch" | "retry" | "override"; prepareFailed: number },
   ) {
     const { mode, prepareFailed } = options;
+    // One generate request per job so each Vercel invocation stays under the
+    // Hobby 300s wall-clock limit (parallel generate was timing out).
+    const sorted = [...preparedJobs].sort((a, b) => a.index - b.index);
+    let succeeded = 0;
+    let generateFailed = 0;
+    let duplicates = 0;
+    let fatalError: string | null = null;
 
+    for (let i = 0; i < sorted.length; i++) {
+      const job = sorted[i];
+      setStatus(
+        `Generating ${i + 1}/${sorted.length}` +
+          (job.extracted.company ? ` · ${job.extracted.company}` : "") +
+          "…",
+      );
+
+      const generateResponse = await fetch("/api/tailor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phase: "generate",
+          preparedJobs: [job],
+        }),
+      });
+
+      await consumeTailorSse(generateResponse, {
+        onEvent: (event) => {
+          if (event.type === "heartbeat" || event.type === "log") return;
+
+          if (event.type === "step") {
+            patchJob(event.index, (current) =>
+              markStepProgress(current, event.step, event.message),
+            );
+          } else if (event.type === "job_done") {
+            succeeded += 1;
+            patchJob(event.index, (current) => markJobDone(current, event));
+          } else if (event.type === "job_duplicate") {
+            duplicates += 1;
+            patchJob(event.index, (current) =>
+              markJobDuplicate(current, event),
+            );
+          } else if (event.type === "job_error") {
+            generateFailed += 1;
+            patchJob(event.index, (current) => markJobError(current, event));
+          } else if (event.type === "fatal") {
+            fatalError = event.error;
+            generateFailed += 1;
+            patchJob(job.index, (current) =>
+              markJobError(current, {
+                type: "job_error",
+                index: job.index,
+                jobUrl: job.jobUrl,
+                step: "generating",
+                error: event.error,
+                phase: "generate",
+              }),
+            );
+            setError(event.error);
+          }
+        },
+      });
+
+      if (fatalError) break;
+    }
+
+    if (fatalError && sorted.length === 1) {
+      setStatus(null);
+      return;
+    }
+
+    const failedTotal = generateFailed + prepareFailed;
     setStatus(
-      `Generating ${preparedJobs.length} resume${
-        preparedJobs.length > 1 ? "s" : ""
-      }…`,
+      mode === "batch"
+        ? `Finished · ${succeeded} succeeded${
+            duplicates
+              ? ` · ${duplicates} duplicate${duplicates > 1 ? "s" : ""} skipped`
+              : ""
+          }${failedTotal ? ` · ${failedTotal} failed` : ""}`
+        : mode === "override"
+          ? succeeded
+            ? `Override finished · job generated`
+            : `Override finished · job failed`
+          : succeeded
+            ? `Retry finished · job succeeded`
+            : duplicates
+              ? `Retry finished · duplicate company, skipped`
+              : `Retry finished · job failed`,
     );
-
-    const generateResponse = await fetch("/api/tailor", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        phase: "generate",
-        preparedJobs,
-      }),
-    });
-
-    await consumeTailorSse(generateResponse, {
-      onEvent: (event) => {
-        if (event.type === "heartbeat" || event.type === "log") return;
-
-        if (event.type === "step") {
-          patchJob(event.index, (job) =>
-            markStepProgress(job, event.step, event.message),
-          );
-        } else if (event.type === "job_done") {
-          patchJob(event.index, (job) => markJobDone(job, event));
-        } else if (event.type === "job_duplicate") {
-          patchJob(event.index, (job) => markJobDuplicate(job, event));
-        } else if (event.type === "job_error") {
-          patchJob(event.index, (job) => markJobError(job, event));
-        } else if (event.type === "done") {
-          const failedTotal = event.failed + prepareFailed;
-          const duplicates = event.duplicates ?? 0;
-          setStatus(
-            mode === "batch"
-              ? `Finished · ${event.succeeded} succeeded${
-                  duplicates
-                    ? ` · ${duplicates} duplicate${duplicates > 1 ? "s" : ""} skipped`
-                    : ""
-                }${failedTotal ? ` · ${failedTotal} failed` : ""}`
-              : mode === "override"
-                ? event.succeeded
-                  ? `Override finished · job generated`
-                  : `Override finished · job failed`
-                : event.succeeded
-                  ? `Retry finished · job succeeded`
-                  : duplicates
-                    ? `Retry finished · duplicate company, skipped`
-                    : `Retry finished · job failed`,
-          );
-        } else if (event.type === "fatal") {
-          setError(event.error);
-          setStatus(null);
-        }
-      },
-    });
   }
 
   async function runJobs(
@@ -487,7 +519,7 @@ export default function ResumeForm() {
           } else if (event.type === "done") {
             setStatus(
               event.succeeded
-                ? `Prepared ${event.succeeded} · generating resumes…`
+                ? `Prepared ${event.succeeded} · generating one at a time…`
                 : `Prepare finished · ${event.failed} failed`,
             );
           } else if (event.type === "fatal") {

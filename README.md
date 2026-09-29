@@ -36,9 +36,9 @@ Open [http://localhost:3000](http://localhost:3000).
 
 1. Profile is fixed in code (`src/lib/profile.ts`) for Karina Elizabeth Garcia Lozana
 2. Paste job URLs (one per line) or paste a full job description
-3. Processing runs as **two short SSE requests** so proxies are less likely to idle-timeout:
-   - **prepare** — scrape (or use pasted JD) and extract structured fields
-   - **generate** — write resume + cover letter, validate, score ATS, and package downloads
+3. Processing is split so free Vercel’s 300s function limit is less likely to kill the run:
+   - **prepare** — scrape (or use pasted JD) and extract structured fields (jobs in parallel)
+   - **generate** — write resume + cover letter **one job at a time** (separate request per job), then validate, score ATS, and package downloads
 4. Each phase streams progress over SSE and sends a heartbeat every 15 seconds while work is in flight
 
 You can also paste a JD on a failed job to skip scraping and regenerate.

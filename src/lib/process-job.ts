@@ -133,19 +133,22 @@ export async function generateOneJob(options: {
   }
 
   log.step("generating", "Generating resume & cover letter…");
-  let tailored = await generateTailoredPackage(profile, extracted, rawText);
+  const tailoredPackage = await generateTailoredPackage(
+    profile,
+    extracted,
+    rawText,
+  );
 
+  // Do not re-call the LLM on validation failure — a second generation often
+  // pushes free Vercel invocations past the 300s limit. Surface the error so
+  // the client can retry that single job.
   log.step("validating", "Validating resume format and content…");
-  let validation = validateAndFixResume(tailored, profile, extracted);
-
-  if (!validation.ok) {
-    log.warn("Validation failed; regenerating once…");
-    log.step("validating", "Fixing validation issues and regenerating…");
-    tailored = await generateTailoredPackage(profile, extracted, rawText);
-    validation = validateAndFixResume(tailored, profile, extracted);
-  }
-
-  tailored = validation.package;
+  const validation = validateAndFixResume(
+    tailoredPackage,
+    profile,
+    extracted,
+  );
+  const tailored = validation.package;
 
   if (!validation.ok) {
     const critical = validation.issues
