@@ -121,6 +121,26 @@ export function buildFallbackSummary(
   );
 }
 
+/** Fallback cover letter when the model omits, renames, or truncates the field. */
+export function buildFallbackCoverLetter(
+  profile: CandidateProfile,
+  extracted: ExtractedJD,
+): string {
+  const name = profile.personal.name || "the candidate";
+  const company = extracted.company || "your team";
+  const role = extracted.jobTitle || extracted.type || "Software Engineer";
+  const skills = extracted.hardTechnicalSkills.slice(0, 6).join(", ");
+  const recent = profile.experiences[0];
+
+  return [
+    `Dear Hiring Manager,\n\nI am writing to apply for the ${role} position at ${company}. With hands-on experience across ${skills || "modern full-stack and cloud platforms"}, I am excited to contribute to your engineering team.`,
+    recent
+      ? `Most recently at ${recent.company} as ${recent.title}, I focused on delivering reliable product features, collaborating with cross-functional partners, and improving systems that matter to customers. That background maps closely to the needs described in this role.`
+      : `My background centers on delivering reliable product features, collaborating with cross-functional partners, and improving systems that matter to customers — experience that maps closely to this role.`,
+    `I would welcome the chance to discuss how I can support ${company}'s goals. Thank you for your time and consideration.\n\nSincerely,\n${name}`,
+  ].join("\n\n");
+}
+
 /** Varied filler bullets so padding never repeats the same sentence. */
 export function buildFillerBullet(
   company: string,

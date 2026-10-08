@@ -9,6 +9,7 @@ import { tailorExperienceTitle } from "./job-title";
 import { chatJson } from "./llm";
 import { parseModelJson } from "./parse-json";
 import {
+  buildFallbackCoverLetter,
   buildFallbackSummary,
   buildFillerBullet,
   dedupeBullets,
@@ -66,27 +67,29 @@ Keywords (for later Word bold formatting):
 
 Cover letter:
 - 3–4 short paragraphs in ONE string, use \\n\\n between paragraphs. No icons/emojis. Professionally mirror the tailored resume and JD.
+- Emit coverLetter as the FIRST top-level JSON key so it is never dropped if output is truncated.
 
 Process (internal — do not output these steps):
 1. Detect the main role domain from the JD: Backend, Frontend, Full Stack, AI, Data Science, ML, LLM, Mobile, or Hybrid.
 2. Extract must-have skills, preferred skills, seniority, domain requirements, ATS keywords, and business/ownership signals.
-3. Reposition the candidate's existing background to align with the role.
-4. Write a full professional summary (4–6 sentences, ~90–130 words), then rewrite skills and experience for maximum fit.
-5. Emphasize the most relevant technologies, systems, and impact in the latest roles.
-6. Keep the full resume cohesive and credible from top to bottom.
-7. Choose ~20 keywords for bolding (plain strings only).
-8. Final quality pass for top-tier, human, ATS-ready writing.
+3. Write the cover letter first, then the resume body.
+4. Reposition the candidate's existing background to align with the role.
+5. Write a full professional summary (4–6 sentences, ~90–130 words), then rewrite skills and experience for maximum fit.
+6. Emphasize the most relevant technologies, systems, and impact in the latest roles.
+7. Keep the full resume cohesive and credible from top to bottom.
+8. Choose ~20 keywords for bolding (plain strings only).
+9. Final quality pass for top-tier, human, ATS-ready writing.
 
-JSON shape:
+JSON shape (coverLetter MUST come first):
 {
+  "coverLetter": string,
   "resume": {
     "summary": string,
     "skills": [{ "category": string, "items": string[] }],
     "experiences": [{ "company": string, "title": string, "period": string, "location": string, "overview": string, "bullets": string[] }],
     "education": [{ "school": string, "degree": string, "period": string, "location": string }],
     "keywords": string[]
-  },
-  "coverLetter": string
+  }
 }`;
 
 export async function generateTailoredPackage(
@@ -107,10 +110,11 @@ export async function generateTailoredPackage(
     { role: "user", content: userPayload },
   ]);
 
-  let parsed: TailoredPackage;
-  try {
-    parsed = parseModelJson<TailoredPackage>(content);
-  } catch (firstError) {
+  let parsed: TailoredPackage | null = tryParsePackage(content);
+  const needsRetry =
+    !parsed || !hasUsableResumeShape(parsed, profile.experiences.length);
+
+  if (needsRetry) {
     content = await requestJson([
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPayload },
@@ -118,35 +122,101 @@ export async function generateTailoredPackage(
       {
         role: "user",
         content:
-          "Your previous reply was invalid JSON. Return ONLY repaired valid JSON for the same request. No markdown, no commentary.",
+          "Your previous reply was invalid. Return ONLY valid JSON matching the required shape. Each experiences item MUST be an object with overview (string) and bullets (string[]), not a string. No markdown, no commentary.",
       },
     ]);
-    try {
-      parsed = parseModelJson<TailoredPackage>(content);
-    } catch {
-      throw firstError instanceof Error
-        ? firstError
-        : new Error("Failed to parse generated resume JSON.");
-    }
+    parsed = tryParsePackage(content);
   }
 
+  if (!parsed) {
+    throw new Error("Failed to parse generated resume JSON.");
+  }
+
+  const rawResume = extractRawResume(parsed);
+  const resume = normalizeResume(rawResume, profile, extracted);
+  const coverLetter =
+    extractCoverLetter(parsed) ||
+    buildFallbackCoverLetter(profile, extracted);
+
+  return { resume, coverLetter };
+}
+
+function tryParsePackage(content: string): TailoredPackage | null {
+  try {
+    return parseModelJson<TailoredPackage>(content);
+  } catch {
+    return null;
+  }
+}
+
+function extractRawResume(
+  parsed: TailoredPackage,
+): TailoredResume | undefined {
   // Models occasionally return resume fields at the top level instead of
   // nested under "resume"; accept both shapes.
   const shaped = parsed as Partial<TailoredPackage> & Partial<TailoredResume>;
-  const rawResume =
-    shaped.resume ??
-    (Array.isArray(shaped.experiences) || shaped.summary
+  const nestedResume =
+    shaped.resume &&
+    typeof shaped.resume === "object" &&
+    !Array.isArray(shaped.resume)
+      ? shaped.resume
+      : undefined;
+  return (
+    nestedResume ??
+    (Array.isArray(shaped.experiences) || typeof shaped.summary === "string"
       ? (shaped as unknown as TailoredResume)
-      : undefined);
+      : undefined)
+  );
+}
 
-  const resume = normalizeResume(rawResume, profile, extracted);
-  const coverLetter = String(parsed.coverLetter || "").trim();
-
-  if (!coverLetter) {
-    throw new Error("Cover letter generation failed.");
+function coerceCoverLetterText(value: unknown): string {
+  if (typeof value === "string") return sanitizePlainText(value).trim();
+  if (Array.isArray(value)) {
+    return sanitizePlainText(
+      value
+        .filter((part) => typeof part === "string")
+        .join("\n\n"),
+    ).trim();
   }
+  return "";
+}
 
-  return { resume, coverLetter };
+/** Accept camelCase, snake_case, or cover letter nested under resume. */
+function extractCoverLetter(parsed: TailoredPackage): string {
+  const root = parsed as unknown as Record<string, unknown>;
+  const nested =
+    isPlainObject(root.resume) ? (root.resume as Record<string, unknown>) : null;
+
+  const candidates = [
+    root.coverLetter,
+    root.cover_letter,
+    root.CoverLetter,
+    nested?.coverLetter,
+    nested?.cover_letter,
+  ];
+
+  for (const candidate of candidates) {
+    const text = coerceCoverLetterText(candidate);
+    if (text) return text;
+  }
+  return "";
+}
+
+function hasUsableResumeShape(
+  parsed: TailoredPackage,
+  expectedExperienceCount: number,
+): boolean {
+  const resume = extractRawResume(parsed);
+  if (!resume || !Array.isArray(resume.experiences)) return false;
+
+  const objectEntries = resume.experiences.filter(isPlainObject);
+  if (objectEntries.length === 0) return false;
+
+  // At least one role should be a real object with bullets.
+  const withBullets = objectEntries.filter((exp) =>
+    Array.isArray(exp.bullets),
+  ).length;
+  return withBullets >= Math.min(expectedExperienceCount, 1);
 }
 
 async function requestJson(
@@ -160,18 +230,26 @@ async function requestJson(
   });
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Models sometimes emit string/null experience slots; ignore those. */
+function asGeneratedExperience(
+  value: unknown,
+): { overview?: unknown; bullets?: unknown } | undefined {
+  return isPlainObject(value) ? value : undefined;
+}
+
 function normalizeSkills(
   skills: unknown,
   extracted: ExtractedJD,
 ): SkillGroup[] {
   if (Array.isArray(skills) && skills.length) {
     // New grouped format
-    if (
-      typeof skills[0] === "object" &&
-      skills[0] !== null &&
-      "category" in (skills[0] as object)
-    ) {
+    if (isPlainObject(skills[0]) && "category" in skills[0]) {
       return (skills as Array<{ category?: unknown; items?: unknown }>)
+        .filter(isPlainObject)
         .map((group) => ({
           category: sanitizePlainText(String(group.category || "Skills")),
           items: Array.isArray(group.items)
@@ -186,6 +264,7 @@ function normalizeSkills(
 
     // Legacy flat string list -> one compact Technical Skills group
     const items = skills
+      .filter((s) => typeof s === "string" || typeof s === "number")
       .map(String)
       .map((s) => sanitizePlainText(s))
       .filter(Boolean);
@@ -217,19 +296,23 @@ function normalizeResume(
   profile: CandidateProfile,
   extracted: ExtractedJD,
 ): TailoredResume {
-  const safe = resume || {
-    summary: "",
-    skills: [],
-    experiences: [],
-    education: [],
-    keywords: [],
-  };
+  const safe =
+    resume && isPlainObject(resume)
+      ? resume
+      : {
+          summary: "",
+          skills: [],
+          experiences: [],
+          education: [],
+          keywords: [],
+        };
 
   const skillGroups = normalizeSkills(safe.skills, extracted);
+  const rawExperiences = Array.isArray(safe.experiences) ? safe.experiences : [];
 
   const modelKeywords = Array.from(
     new Set(
-      (safe.keywords || [])
+      (Array.isArray(safe.keywords) ? safe.keywords : [])
         .map((k) => String(k).trim())
         .filter(Boolean),
     ),
@@ -251,10 +334,10 @@ function normalizeResume(
   ).slice(0, 20);
 
   const experiences = profile.experiences.map((exp, index) => {
-    const generated = safe.experiences?.[index];
+    const generated = asGeneratedExperience(rawExperiences[index]);
     const bulletTarget = targetBulletCount(index);
     let bullets = dedupeBullets(
-      (generated?.bullets || [])
+      (Array.isArray(generated?.bullets) ? generated.bullets : [])
         .map(String)
         .map((b) => sanitizePlainText(b))
         .filter(Boolean),
@@ -271,11 +354,7 @@ function normalizeResume(
     bullets = bullets.slice(0, bulletTarget);
 
     const overview = sanitizePlainText(
-      String(
-        generated && "overview" in generated
-          ? (generated as { overview?: string }).overview || ""
-          : "",
-      ),
+      String(typeof generated?.overview === "string" ? generated.overview : ""),
     );
 
     return {
@@ -294,7 +373,9 @@ function normalizeResume(
     };
   });
 
-  const summary = sanitizePlainText(String(safe.summary || ""));
+  const summary = sanitizePlainText(
+    String(typeof safe.summary === "string" ? safe.summary : ""),
+  );
 
   return {
     summary: summary || buildFallbackSummary(profile, extracted),
@@ -302,11 +383,11 @@ function normalizeResume(
     experiences,
     education:
       Array.isArray(safe.education) && safe.education.length
-        ? safe.education.map((edu) => ({
-            school: sanitizePlainText(edu.school),
-            degree: sanitizePlainText(edu.degree),
-            period: sanitizePlainText(edu.period),
-            location: sanitizePlainText(edu.location),
+        ? safe.education.filter(isPlainObject).map((edu) => ({
+            school: sanitizePlainText(String(edu.school ?? "")),
+            degree: sanitizePlainText(String(edu.degree ?? "")),
+            period: sanitizePlainText(String(edu.period ?? "")),
+            location: sanitizePlainText(String(edu.location ?? "")),
           }))
         : profile.education,
     keywords: keywords.map((k) => sanitizePlainText(k)).filter(Boolean),
